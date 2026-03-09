@@ -67,32 +67,31 @@ std::string ToStringImpl(const ExprHandle& expr) {
 }  // namespace
 
 ExprHandle Constant(int64_t value) {
-  return std::make_shared<Expr>(Expr::Kind::kConstant, value, nullptr,
-                                nullptr);
+  return ExprHandle(new Expr(Expr::Kind::kConstant, value, nullptr, nullptr));
 }
 
 ExprHandle Variable(int32_t id) {
-  return std::make_shared<Expr>(Expr::Kind::kVariable, id, nullptr, nullptr);
+  return ExprHandle(new Expr(Expr::Kind::kVariable, id, nullptr, nullptr));
 }
 
 ExprHandle Add(ExprHandle lhs, ExprHandle rhs) {
-  return std::make_shared<Expr>(Expr::Kind::kAdd, 0, std::move(lhs),
-                                std::move(rhs));
+  return ExprHandle(
+      new Expr(Expr::Kind::kAdd, 0, std::move(lhs), std::move(rhs)));
 }
 
 ExprHandle Sub(ExprHandle lhs, ExprHandle rhs) {
-  return std::make_shared<Expr>(Expr::Kind::kSub, 0, std::move(lhs),
-                                std::move(rhs));
+  return ExprHandle(
+      new Expr(Expr::Kind::kSub, 0, std::move(lhs), std::move(rhs)));
 }
 
 ExprHandle Mul(ExprHandle lhs, ExprHandle rhs) {
-  return std::make_shared<Expr>(Expr::Kind::kMul, 0, std::move(lhs),
-                                std::move(rhs));
+  return ExprHandle(
+      new Expr(Expr::Kind::kMul, 0, std::move(lhs), std::move(rhs)));
 }
 
 ExprHandle Div(ExprHandle lhs, ExprHandle rhs) {
-  return std::make_shared<Expr>(Expr::Kind::kDiv, 0, std::move(lhs),
-                                std::move(rhs));
+  return ExprHandle(
+      new Expr(Expr::Kind::kDiv, 0, std::move(lhs), std::move(rhs)));
 }
 
 bool StructuralEqual(const ExprHandle& lhs, const ExprHandle& rhs) {
