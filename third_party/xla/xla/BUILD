@@ -453,6 +453,24 @@ xla_cc_test(
 )
 
 cc_library(
+    name = "symbolic_expr",
+    srcs = ["symbolic_expr.cc"],
+    hdrs = ["symbolic_expr.h"],
+    visibility = ["//visibility:public"],
+)
+
+xla_cc_test(
+    name = "symbolic_expr_test",
+    srcs = ["symbolic_expr_test.cc"],
+    deps = [
+        ":symbolic_expr",
+        ":xla_data_proto_cc",
+        "//xla/tsl/platform:test_main",
+        "@com_google_googletest//:gtest",
+    ],
+)
+
+cc_library(
     name = "shape_util",
     srcs = [
         "index_util.cc",
