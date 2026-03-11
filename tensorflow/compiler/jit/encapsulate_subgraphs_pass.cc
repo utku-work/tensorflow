@@ -266,7 +266,7 @@ void LogExpressionsViaGraphProperties(const tensorflow::Graph& graph) {
         if (expr.node_type_case() == ExpressionProto::NODE_TYPE_NOT_SET)
           continue;
 
-        VLOG(1) << "Node " << n.name() << " has expression "
+        LOG(INFO) << "Node " << n.name() << " has expression "
                 << ExprProtoToString(expr);
 
         auto ex = ExprFromProto(expr);

@@ -1998,6 +1998,9 @@ class SymbolicShapeRefiner {
     for (int out = 0; out < ic->num_outputs(); ++out) {
       ShapeHandle s = ic->output(out);
 
+      if (node->op() == "_Arg"){
+        LOG(INFO) << "CanonicalizeOutputDims for _Arg: node=" << node->name() << " out=" << out;
+      }
       if (!ic->RankKnown(s) && node->op() == "_Arg") {
         // Treat batched function arguments as vectors with batch dim at dim0.
         DimensionHandle d0 = GetUnknownOutputDim(node, out, /*dim_index=*/0);
