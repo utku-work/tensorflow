@@ -137,6 +137,7 @@ struct Processor<DimensionHandle> {
   // otherwise look for a symbolic shape. If there is no symbolic shape and no
   // known shape, the shape if fully unknown so return -1.
   absl::Status Merge(DimensionHandle d1, DimensionHandle d2, int64_t* result) {
+    LOG(INFO)<<"Merge(DimensionHandle d1, DimensionHandle d2, int64_t* result) "
     const int64_t dim1 = InferenceContext::Value(d1);
     const int64_t dim2 = InferenceContext::Value(d2);
 
