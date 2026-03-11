@@ -621,6 +621,25 @@ REGISTER_OP("SparseFillEmptyRows")
       DimensionHandle N = c->Dim(input_indices, 0);
       TF_RETURN_IF_ERROR(c->Merge(N, c->Dim(input_values, 0), &N));
       DimensionHandle unused_dim;
+
+      auto log_dim = [&](const char* name, DimensionHandle d) {
+        DimExpr* expr = c->GetDimExpr(d);
+        if (expr != nullptr) {
+          LOG(INFO) << "[SparseFillEmptyRows] " << name
+                    << " value=" << c->Value(d)
+                    << " expr=" << expr->DebugString();
+        } else {
+          LOG(INFO) << "[SparseFillEmptyRows] " << name
+                    << " value=" << c->Value(d)
+                    << " expr=<none>";
+        }
+      };
+
+      log_dim("input_indices.dim0", c->Dim(input_indices, 0));
+      log_dim("input_indices.dim1", c->Dim(input_indices, 1));
+      log_dim("input_values.dim0", c->Dim(input_values, 0));
+      log_dim("input_shape.dim0", c->Dim(input_shape, 0));
+
       TF_RETURN_IF_ERROR(c->Merge(c->Dim(input_indices, 1),
                                   c->Dim(input_shape, 0), &unused_dim));
       if (c->Value(c->NumElements(input_shape)) == 0)
