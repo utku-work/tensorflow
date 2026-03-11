@@ -1521,13 +1521,36 @@ absl::Status EncapsulateSubgraphsPass::Run(
         // TODO(phawkins): add a forward is-constant analysis, similarly split
         // outputs into host-memory constants and device-memory non-constants.
 
+        // auto has_nontrivial_expressions = [](const Graph& g) {
+        //   LOG(INFO) <<"CLUSTER Begin: " <<"\n";
+        //   for (Node* n : g.op_nodes()) {
+        //     LOG(INFO) <<n->DebugString()<<",";
+        //   }
+        //   LOG(INFO) <<"CLUSTER Finish: " <<"\n";
+        // };
+        
         auto has_nontrivial_expressions = [](const Graph& g) {
-          LOG(INFO) <<"CLUSTER Begin: " <<"\n";
-          for (Node* n : g.op_nodes()) {
-            LOG(INFO) <<n->DebugString()<<",";
+        LOG(INFO) << "CLUSTER Begin:";
+        for (Node* n : g.op_nodes()) {
+          LOG(INFO) << n->DebugString() << ",";
+          if (n->IsArg()) {
+            std::vector<TensorShapeProto> shapes;
+            Status s = GetNodeAttr(n->attrs(), "_output_shapes", &shapes);
+            if (s.ok()) {
+              for (int i = 0; i < static_cast<int>(shapes.size()); i++) {
+                const auto& shape = shapes[i];
+                for (int j = 0; j < shape.expressions_size(); j++) {
+                  LOG(INFO) << "  Arg " << n->name()
+                            << " expr[" << j << "]: "
+                            << ExprProtoToString(shape.expressions(j));
+                }
+              }
+            }
           }
-          LOG(INFO) <<"CLUSTER Finish: " <<"\n";
-        };
+        }
+        LOG(INFO) << "CLUSTER Finish:";
+      };
+
         has_nontrivial_expressions(**subgraph);
         bool compile_enabled = !SubgraphHasFailingOps(**subgraph);
         AddNodeAttr(kXlaCompiledKernelAttr, compile_enabled, node);
