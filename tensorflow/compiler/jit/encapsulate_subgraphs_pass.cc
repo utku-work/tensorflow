@@ -672,6 +672,8 @@ absl::Status Encapsulator::Subgraph::RecordArg(
       const TensorShapeProto& shape = shape_attr->list().shape(src_slot);
       TensorShapeProto* tsp =
           mutable_shape_attr.mutable_list()->mutable_shape(src_slot);
+      LOG(INFO) << "Found shape attribute in " << src_node->name() << ":"
+                << expr_map[src_node->name()][src_slot]->DebugString();
       std::vector<std::unique_ptr<DimExpr>> expressions =
           std::move(expr_map[src_node->name()][src_slot]);
 
