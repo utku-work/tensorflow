@@ -1521,14 +1521,14 @@ absl::Status EncapsulateSubgraphsPass::Run(
         // TODO(phawkins): add a forward is-constant analysis, similarly split
         // outputs into host-memory constants and device-memory non-constants.
 
-        auto has_nontrivial_expressions = [](const Graph& g) -> bool {
-          LOG(INFO) <<"CLUSTER Begin: " <<"\n";
-          for (Node* n : g.op_nodes()) {
-            LOG(INFO) <<n->DebugString()<<",";
-          }
-          LOG(INFO) <<"CLUSTER Finish: " <<"\n";
-        };
-        has_nontrivial_expressions(**subgraph);
+        // auto has_nontrivial_expressions = [](const Graph& g) -> bool {
+        //   LOG(INFO) <<"CLUSTER Begin: " <<"\n";
+        //   for (Node* n : g.op_nodes()) {
+        //     LOG(INFO) <<n->DebugString()<<",";
+        //   }
+        //   LOG(INFO) <<"CLUSTER Finish: " <<"\n";
+        // };
+        // has_nontrivial_expressions(**subgraph);
         bool compile_enabled = !SubgraphHasFailingOps(**subgraph);
         AddNodeAttr(kXlaCompiledKernelAttr, compile_enabled, node);
         AddNodeAttr(kXlaNumConstantArgsAttr, num_consts, node);
