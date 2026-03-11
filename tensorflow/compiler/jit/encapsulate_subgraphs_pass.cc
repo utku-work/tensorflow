@@ -217,6 +217,7 @@ static xla::DynExpr* DimExprToDynExpr(const DimExpr* e) {
 // Runs Grappler static inference and logs any ExpressionProto found in output
 // tensor shapes (from GraphProperties, not from _output_shapes attrs).
 void LogExpressionsViaGraphProperties(const tensorflow::Graph& graph) {
+  LOG(INFO)<< "LogExpressionsViaGraphProperties\n";
   using tensorflow::ExpressionProto;
   using tensorflow::GraphDef;
   using tensorflow::NodeDef;
@@ -672,7 +673,7 @@ absl::Status Encapsulator::Subgraph::RecordArg(
       const TensorShapeProto& shape = shape_attr->list().shape(src_slot);
       TensorShapeProto* tsp =
           mutable_shape_attr.mutable_list()->mutable_shape(src_slot);
-        
+
         const auto& exprs = expr_map[src_node->name()][src_slot];
         LOG(INFO) << "Found shape attribute in " << src_node->name()
                   << ":" << src_slot
