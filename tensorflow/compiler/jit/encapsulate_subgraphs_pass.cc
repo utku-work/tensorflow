@@ -1522,11 +1522,11 @@ absl::Status EncapsulateSubgraphsPass::Run(
         // outputs into host-memory constants and device-memory non-constants.
 
         auto has_nontrivial_expressions = [](const Graph& g) -> bool {
-          LOG(INFO) <<"CLUSTER Begin: " << g.name()<<"\n";
+          LOG(INFO) <<"CLUSTER Begin: " <<"\n";
           for (Node* n : g.op_nodes()) {
             LOG(INFO) <<n->DebugString()<<",";
           }
-          LOG(INFO) <<"CLUSTER Finish: " << g.name()<<"\n";
+          LOG(INFO) <<"CLUSTER Finish: " <<"\n";
         };
         has_nontrivial_expressions(**subgraph);
         bool compile_enabled = !SubgraphHasFailingOps(**subgraph);
