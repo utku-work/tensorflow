@@ -1549,18 +1549,22 @@ absl::Status EncapsulateSubgraphsPass::Run(
         for (Node* n : g.op_nodes()) {
           LOG(INFO) << n->DebugString() << ",";
           if (n->IsArg()) {
-            std::vector<TensorShapeProto> shapes;
-            Status s = GetNodeAttr(n->attrs(), "_output_shapes", &shapes);
-            if (s.ok()) {
-              for (int i = 0; i < static_cast<int>(shapes.size()); i++) {
-                const auto& shape = shapes[i];
-                for (int j = 0; j < shape.expressions_size(); j++) {
-                  LOG(INFO) << "  Arg " << n->name()
-                            << " expr[" << j << "]: "
-                            << ExprProtoToString(shape.expressions(j));
-                }
-              }
-            }
+            LOG(INFO)<<"Node: "<<n->DebugString();
+
+            // std::vector<TensorShapeProto> shapes;
+            // Status s = GetNodeAttr(n->attrs(), "_output_shapes", &shapes);
+            // if (s.ok()) {
+            //   for (int i = 0; i < static_cast<int>(shapes.size()); i++) {
+            //     const auto& shape = shapes[i];
+            //      LOG(INFO) << "  Arg " << n->name() <<ExprProtoToString(expr_map[n.name()].at(0) )
+                
+            //     // for (int j = 0; j < shape.expressions_size(); j++) {
+            //     //   LOG(INFO) << "  Arg " << n->name()
+            //     //             << " expr[" << j << "]: "
+            //     //             << ExprProtoToString(shape.expressions(j));
+            //     // }
+            //   }
+            // }
           }
         }
         LOG(INFO) << "CLUSTER Finish:";
