@@ -447,8 +447,7 @@ void InferenceContext::Relax(DimensionHandle d_old, DimensionHandle d_new,
 
 absl::Status InferenceContext::Merge(DimensionHandle d0, DimensionHandle d1,
                                      DimensionHandle* out) {
-                                      LOG(INFO)<<"absl::Status InferenceContext::Merge(DimensionHandle d0, DimensionHandle d1,
-                                     DimensionHandle* out)";
+  LOG(INFO)<<"absl::Status InferenceContext::Merge(DimensionHandle d0, DimensionHandle d1,DimensionHandle* out)";
   if (d0.SameHandle(d1)) {
     *out = d0;
     return absl::OkStatus();
@@ -543,8 +542,7 @@ void InferenceContext::Relax(ShapeHandle s_old, ShapeHandle s_new,
 
 absl::Status InferenceContext::Merge(ShapeHandle s0, ShapeHandle s1,
                                      ShapeHandle* out) {
-                                      LOG(INFO)<<"absl::Status InferenceContext::Merge(ShapeHandle s0, ShapeHandle s1,
-                                     ShapeHandle* out)";
+  LOG(INFO)<<"absl::Status InferenceContext::Merge(ShapeHandle s0, ShapeHandle s1,ShapeHandle* out)";
   if (s0.SameHandle(s1)) {
     *out = s0;
     return absl::OkStatus();
