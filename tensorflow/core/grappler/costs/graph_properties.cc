@@ -98,6 +98,7 @@ struct Processor<ShapeHandle> {
   void ExtractValue(ShapeHandle h, ShapeHandle* result) { *result = h; }
   // Merge the shapes or dims.
   absl::Status Merge(ShapeHandle h1, ShapeHandle h2, ShapeHandle* result) {
+    LOG(INFO)<<"graph_pro:absl::Status Merge(ShapeHandle h1, ShapeHandle h2, ShapeHandle* result)  \n";
     if (InferenceContext::RankKnown(*result)) {
       // The result was initialized in a previous merge to a shape of known
       // rank, make sure we preserve that information.
@@ -137,7 +138,7 @@ struct Processor<DimensionHandle> {
   // otherwise look for a symbolic shape. If there is no symbolic shape and no
   // known shape, the shape if fully unknown so return -1.
   absl::Status Merge(DimensionHandle d1, DimensionHandle d2, int64_t* result) {
-    LOG(INFO)<<"Merge(DimensionHandle d1, DimensionHandle d2, int64_t* result) \n";
+    LOG(INFO)<<"graph_pro:absl::Status Merge(DimensionHandle d1, DimensionHandle d2, int64_t* result)  \n";
     const int64_t dim1 = InferenceContext::Value(d1);
     const int64_t dim2 = InferenceContext::Value(d2);
 
