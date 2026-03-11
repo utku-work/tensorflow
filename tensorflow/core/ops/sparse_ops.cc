@@ -610,6 +610,7 @@ REGISTER_OP("SparseFillEmptyRows")
     .Output("reverse_index_map: int64")
     .Attr("T: type")
     .SetShapeFn([](InferenceContext* c) {
+      LOG(INFO)<<"[SparseFillEmptyRows] shape function: start";
       ShapeHandle input_indices = c->input(0);
       TF_RETURN_IF_ERROR(c->WithRank(input_indices, 2, &input_indices));
       ShapeHandle input_values = c->input(1);
@@ -666,6 +667,7 @@ REGISTER_OP("SparseFillEmptyRowsGrad")
     .Output("d_default_value: T")
     .Attr("T: type")
     .SetShapeFn([](InferenceContext* c) {
+        LOG(INFO)<<"[SparseFillEmptyRowsGrad] shape function: start";
       ShapeHandle reverse_index_map = c->input(0);
       TF_RETURN_IF_ERROR(c->WithRank(reverse_index_map, 1, &reverse_index_map));
       ShapeHandle grad_values = c->input(1);
