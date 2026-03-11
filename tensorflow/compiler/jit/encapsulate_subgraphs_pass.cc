@@ -1547,7 +1547,6 @@ absl::Status EncapsulateSubgraphsPass::Run(
         auto has_nontrivial_expressions = [](const Graph& g) {
         LOG(INFO) << "CLUSTER Begin:";
         for (Node* n : g.op_nodes()) {
-          LOG(INFO) << n->DebugString() << ",";
           if (n->IsArg()) {
             LOG(INFO)<<"Node: "<<n->DebugString();
 
