@@ -192,7 +192,7 @@ static xla::DynExpr* DimExprToDynExpr(const DimExpr* e) {
     }
     case DimExpr::Kind::kVariable: {
       auto* av = static_cast<const Variable*>(e);
-      return xla::DynExpr::V(1);  // Use 1 all the time for now
+      return xla::DynExpr::V(av->id());  // Use 1 all the time for now
     }
     case DimExpr::Kind::kAdd: {
       auto* ee = static_cast<const ExprAdd*>(e);
