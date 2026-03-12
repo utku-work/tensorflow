@@ -929,12 +929,7 @@ absl::Status InferenceContext::MakeShapeFromPartialTensorShape(
   for (int i = 0; i < num_dims; ++i) {
     // -1 is unknown in PartialTensorShape and in InferenceContext, so this size
     // can be passed directly to MakeDim.
-    if(i == 0){
-      dims[i] = MakeDim(partial_shape.dim_size(i), 1);
-    }
-    else {
-      dims[i] = MakeDim(partial_shape.dim_size(i));
-    }
+    dims[i] = MakeDim(partial_shape.dim_size(i));
   }
   return ReturnCreatedShape(dims, out);
 }

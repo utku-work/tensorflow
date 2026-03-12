@@ -377,7 +377,7 @@ TEST(ValidateStridedSliceOpTest, BasicStride) {
       &begin_tensor, &end_tensor, strides_tensor, input_shape, begin_mask_spec,
       end_mask_spec, ellipsis_mask, new_axis_mask, shrink_axis_mask,
       &processing_shape, &final_shape, &is_identity, &is_simple_slice,
-      &slice_dim0, &begin, &end, &strides, &shape_spec));
+      &slice_dim0, &begin, &end, &strides, nullptr, nullptr, &shape_spec));
 
   EXPECT_EQ(processing_shape, AsTensorShape({5, 4}));
   EXPECT_EQ(final_shape, AsTensorShape({5, 4}));
@@ -410,7 +410,7 @@ TEST(ValidateStridedSliceOpTest, NegativeBeginEnd) {
       &begin_tensor, &end_tensor, strides_tensor, input_shape, begin_mask_spec,
       end_mask_spec, ellipsis_mask, new_axis_mask, shrink_axis_mask,
       &processing_shape, &final_shape, &is_identity, &is_simple_slice,
-      &slice_dim0, &begin, &end, &strides, &shape_spec));
+      &slice_dim0, &begin, &end, &strides, nullptr, nullptr, &shape_spec));
 
   EXPECT_EQ(processing_shape, AsTensorShape({3, 4}));
   EXPECT_EQ(final_shape, AsTensorShape({3, 4}));
@@ -439,7 +439,7 @@ TEST(ValidateStridedSliceOpTest, EmptyOutputDim) {
       &begin_tensor, &end_tensor, strides_tensor, input_shape, begin_mask_spec,
       end_mask_spec, ellipsis_mask, new_axis_mask, shrink_axis_mask,
       &processing_shape, &final_shape, &is_identity, &is_simple_slice,
-      &slice_dim0, &begin, &end, &strides, &shape_spec));
+      &slice_dim0, &begin, &end, &strides, nullptr, nullptr, &shape_spec));
 
   EXPECT_EQ(processing_shape, AsTensorShape({3, 0}));
   EXPECT_EQ(final_shape, AsTensorShape({3, 0}));
@@ -467,7 +467,8 @@ TEST(ValidateStridedSliceOpTest, ZeroStrideFails) {
           &begin_tensor, &end_tensor, strides_tensor, input_shape,
           begin_mask_spec, end_mask_spec, ellipsis_mask, new_axis_mask,
           shrink_axis_mask, &processing_shape, &final_shape, &is_identity,
-          &is_simple_slice, &slice_dim0, &begin, &end, &strides, &shape_spec),
+          &is_simple_slice, &slice_dim0, &begin, &end, &strides, nullptr,
+          nullptr, &shape_spec),
       tsl::testing::StatusIs(
           tsl::error::Code::INVALID_ARGUMENT,
           ::testing::ContainsRegex("strides.* must be non-zero")));
@@ -495,7 +496,7 @@ TEST(ValidateStridedSliceOpTest, ShrinkAxis) {
       &begin_tensor, &end_tensor, strides_tensor, input_shape, begin_mask_spec,
       end_mask_spec, ellipsis_mask, new_axis_mask, shrink_axis_mask,
       &processing_shape, &final_shape, &is_identity, &is_simple_slice,
-      &slice_dim0, &begin, &end, &strides, &shape_spec));
+      &slice_dim0, &begin, &end, &strides, nullptr, nullptr, &shape_spec));
 
   EXPECT_EQ(final_shape, AsTensorShape({3, 5}));
 }
@@ -523,7 +524,8 @@ TEST(ValidateStridedSliceOpTest, ShrinkSliceOutOfBoundsFails) {
           &begin_tensor, &end_tensor, strides_tensor, input_shape,
           begin_mask_spec, end_mask_spec, ellipsis_mask, new_axis_mask,
           shrink_axis_mask, &processing_shape, &final_shape, &is_identity,
-          &is_simple_slice, &slice_dim0, &begin, &end, &strides, &shape_spec),
+          &is_simple_slice, &slice_dim0, &begin, &end, &strides, nullptr,
+          nullptr, &shape_spec),
       tsl::testing::StatusIs(
           tsl::error::Code::INVALID_ARGUMENT,
           ::testing::ContainsRegex("slice index .* out of bounds")));
@@ -552,7 +554,8 @@ TEST(ValidateStridedSliceOpTest, ShrinkAxisNegativeStrideFails) {
           &begin_tensor, &end_tensor, strides_tensor, input_shape,
           begin_mask_spec, end_mask_spec, ellipsis_mask, new_axis_mask,
           shrink_axis_mask, &processing_shape, &final_shape, &is_identity,
-          &is_simple_slice, &slice_dim0, &begin, &end, &strides, &shape_spec),
+          &is_simple_slice, &slice_dim0, &begin, &end, &strides, nullptr,
+          nullptr, &shape_spec),
       tsl::testing::StatusIs(
           tsl::error::Code::INVALID_ARGUMENT,
           ::testing::ContainsRegex("only stride 1 allowed")));
@@ -579,7 +582,7 @@ TEST(ValidateStridedSliceOpTest, NewAxis) {
       &begin_tensor, &end_tensor, strides_tensor, input_shape, begin_mask_spec,
       end_mask_spec, ellipsis_mask, new_axis_mask, shrink_axis_mask,
       &processing_shape, &final_shape, &is_identity, &is_simple_slice,
-      &slice_dim0, &begin, &end, &strides, &shape_spec));
+      &slice_dim0, &begin, &end, &strides, nullptr, nullptr, &shape_spec));
 
   EXPECT_EQ(processing_shape, AsTensorShape({10, 10}));
   EXPECT_EQ(final_shape, AsTensorShape({10, 1, 10}));
@@ -606,7 +609,7 @@ TEST(ValidateStridedSliceOpTest, Ellipsis) {
       &begin_tensor, &end_tensor, strides_tensor, input_shape, begin_mask_spec,
       end_mask_spec, ellipsis_mask, new_axis_mask, shrink_axis_mask,
       &processing_shape, &final_shape, &is_identity, &is_simple_slice,
-      &slice_dim0, &begin, &end, &strides, &shape_spec));
+      &slice_dim0, &begin, &end, &strides, nullptr, nullptr, &shape_spec));
 
   EXPECT_EQ(processing_shape, AsTensorShape({10, 10}));
   EXPECT_EQ(final_shape, AsTensorShape({10, 10, 1}));
@@ -634,7 +637,8 @@ TEST(ValidateStridedSliceOpTest, MultipleEllipsisFails) {
           &begin_tensor, &end_tensor, strides_tensor, input_shape,
           begin_mask_spec, end_mask_spec, ellipsis_mask, new_axis_mask,
           shrink_axis_mask, &processing_shape, &final_shape, &is_identity,
-          &is_simple_slice, &slice_dim0, &begin, &end, &strides, &shape_spec),
+          &is_simple_slice, &slice_dim0, &begin, &end, &strides, nullptr,
+          nullptr, &shape_spec),
       tsl::testing::StatusIs(tsl::error::Code::INVALID_ARGUMENT,
                              "Multiple ellipses in slice spec not allowed"));
 }
@@ -661,7 +665,8 @@ TEST(ValidateStridedSliceOpTest, WrongBeginTensorFails) {
           &begin_tensor, &end_tensor, strides_tensor, input_shape,
           begin_mask_spec, end_mask_spec, ellipsis_mask, new_axis_mask,
           shrink_axis_mask, &processing_shape, &final_shape, &is_identity,
-          &is_simple_slice, &slice_dim0, &begin, &end, &strides, &shape_spec),
+          &is_simple_slice, &slice_dim0, &begin, &end, &strides, nullptr,
+          nullptr, &shape_spec),
       tsl::testing::StatusIs(
           tsl::error::Code::INVALID_ARGUMENT,
           ::testing::ContainsRegex("Expected .* equal size tensors")));
@@ -688,7 +693,8 @@ TEST(ValidateStridedSliceOpTest, WrongStridesTensorWithNullBeginFails) {
           /*begin_tensor=*/nullptr, &end_tensor, strides_tensor, input_shape,
           begin_mask_spec, end_mask_spec, ellipsis_mask, new_axis_mask,
           shrink_axis_mask, &processing_shape, &final_shape, &is_identity,
-          &is_simple_slice, &slice_dim0, &begin, &end, &strides, &shape_spec),
+          &is_simple_slice, &slice_dim0, &begin, &end, &strides, nullptr,
+          nullptr, &shape_spec),
       tsl::testing::StatusIs(
           tsl::error::Code::INVALID_ARGUMENT,
           ::testing::ContainsRegex("Expected .* equal size tensors")));
@@ -713,7 +719,8 @@ TEST(ValidateStridedSliceOpTest, NullBeginEndWithShrinkAxis) {
       /*begin_tensor=*/nullptr, /*end_tensor=*/nullptr, strides_tensor,
       input_shape, begin_mask_spec, end_mask_spec, ellipsis_mask, new_axis_mask,
       shrink_axis_mask, &processing_shape, &final_shape, &is_identity,
-      &is_simple_slice, &slice_dim0, &begin, &end, &strides, &shape_spec));
+      &is_simple_slice, &slice_dim0, &begin, &end, &strides, nullptr,
+      nullptr, &shape_spec));
 
   EXPECT_EQ(processing_shape, AsTensorShape({5, 5, 1}));
   EXPECT_EQ(final_shape, AsTensorShape({5, 5}));
@@ -741,7 +748,8 @@ TEST(ValidateStridedSliceOpTest, UnknownInputRankFails) {
           /*begin_tensor=*/nullptr, &end_tensor, strides_tensor, input_shape,
           begin_mask_spec, end_mask_spec, ellipsis_mask, new_axis_mask,
           shrink_axis_mask, &processing_shape, &final_shape, &is_identity,
-          &is_simple_slice, &slice_dim0, &begin, &end, &strides, &shape_spec),
+          &is_simple_slice, &slice_dim0, &begin, &end, &strides, nullptr,
+          nullptr, &shape_spec),
       tsl::testing::StatusIs(tsl::error::Code::INVALID_ARGUMENT,
                              ::testing::ContainsRegex("unknown rank")));
 }
@@ -768,7 +776,8 @@ TEST(ValidateStridedSliceOpTest, PartialInputShape) {
       /*begin_tensor=*/nullptr, &end_tensor, strides_tensor, input_shape,
       begin_mask_spec, end_mask_spec, ellipsis_mask, new_axis_mask,
       shrink_axis_mask, &processing_shape, &final_shape, &is_identity,
-      &is_simple_slice, &slice_dim0, &begin, &end, &strides, &shape_spec));
+      &is_simple_slice, &slice_dim0, &begin, &end, &strides, nullptr,
+      nullptr, &shape_spec));
 }
 
 }  // namespace
