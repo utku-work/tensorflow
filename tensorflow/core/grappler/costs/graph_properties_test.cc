@@ -1760,6 +1760,70 @@ TEST_F(GraphPropertiesTest, FunctionWithUnknownRankInputStaysUnknownRank) {
   EXPECT_TRUE(out_prop0.shape().unknown_rank());
 }
 
+TEST_F(GraphPropertiesTest,
+       FunctionWithUnknownRankInputShapeSliceFillStaysUnknownRank) {
+  FunctionDefLibrary library;
+  *library.add_function() = FunctionDefHelper::Create(
+      "MyShapeSliceFillFunc",                                      // Name
+      {"x: float", "begin: int32", "end: int32",               // Inputs
+       "strides: int32", "value: float"},
+      {"out: float"},                                              // Outputs
+      {},                                                           // Attrs
+      {
+          {{"shape"},
+           "Shape",
+           {"x"},
+           {{"T", DataType::DT_FLOAT}, {"out_type", DataType::DT_INT32}}},
+          {{"slice"},
+           "StridedSlice",
+           {"shape", "begin", "end", "strides"},
+           {{"T", DataType::DT_INT32},
+            {"Index", DataType::DT_INT32},
+            {"begin_mask", 0},
+            {"end_mask", 0},
+            {"ellipsis_mask", 0},
+            {"new_axis_mask", 0},
+            {"shrink_axis_mask", 0}}},
+          {{"fill"},
+           "Fill",
+           {"slice", "value"},
+           {{"T", DataType::DT_FLOAT}, {"index_type", DataType::DT_INT32}}},
+      },
+      {{"out", "fill:output:0"}});                               // Returns
+
+  tensorflow::Scope s = tensorflow::Scope::NewRootScope();
+  TF_ASSERT_OK(s.graph()->AddFunctionLibrary(library));
+
+  Output placeholder =
+      ops::Placeholder(s.WithOpName("Placeholder"), DataType::DT_FLOAT);
+  Output begin = ops::Const(s.WithOpName("begin"), {0}, {1});
+  Output end = ops::Const(s.WithOpName("end"), {1}, {1});
+  Output strides = ops::Const(s.WithOpName("strides"), {1}, {1});
+  Output value = ops::Const(s.WithOpName("value"), 0.0f, {});
+
+  tensorflow::Node* func_op;
+  TF_ASSERT_OK(
+      tensorflow::NodeBuilder("MyShapeSliceFillFunc", "MyShapeSliceFillFunc",
+                              s.graph()->op_registry())
+          .Input(tensorflow::ops::AsNodeOut(s, placeholder))
+          .Input(tensorflow::ops::AsNodeOut(s, begin))
+          .Input(tensorflow::ops::AsNodeOut(s, end))
+          .Input(tensorflow::ops::AsNodeOut(s, strides))
+          .Input(tensorflow::ops::AsNodeOut(s, value))
+          .Finalize(s.graph(), &func_op));
+
+  GrapplerItem item;
+  TF_ASSERT_OK(s.ToGraphDef(&item.graph));
+
+  GraphProperties properties(item);
+  TF_ASSERT_OK(properties.InferStatically(true));
+  const auto out_props = properties.GetOutputProperties("MyShapeSliceFillFunc");
+  ASSERT_EQ(1, out_props.size());
+  const OpInfo::TensorProperties& out_prop0 = out_props[0];
+  EXPECT_EQ(DT_FLOAT, out_prop0.dtype());
+  EXPECT_TRUE(out_prop0.shape().unknown_rank());
+}
+
 TEST_F(GraphPropertiesTest, SimpleFunctionStaticShapeInference) {
   // Test graph produced in python using:
   /*
