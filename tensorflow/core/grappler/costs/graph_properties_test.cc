@@ -1701,6 +1701,65 @@ TEST_F(GraphPropertiesTest, FunctionWithScalarInput) {
   EXPECT_FALSE(out_prop0.shape().unknown_rank());
 }
 
+TEST_F(GraphPropertiesTest, FunctionWithUnknownRankInputStaysUnknownRank) {
+  FunctionDefLibrary library;
+  *library.add_function() = FunctionDefHelper::Create(
+      "MySliceSelectFunc",                                     // Name
+      {"x: float", "begin: int32", "end: int32",           // Inputs
+       "strides: int32", "pred: bool"},
+      {"out: float"},                                         // Outputs
+      {},                                                      // Attrs
+      {
+          {{"slice"},
+           "StridedSlice",
+           {"x", "begin", "end", "strides"},
+           {{"T", DataType::DT_FLOAT},
+            {"Index", DataType::DT_INT32},
+            {"begin_mask", 0},
+            {"end_mask", 0},
+            {"ellipsis_mask", 0},
+            {"new_axis_mask", 0},
+            {"shrink_axis_mask", 0}}},
+          {{"selected"},
+           "Select",
+           {"pred", "slice", "slice"},
+           {{"T", DataType::DT_FLOAT}}},
+      },
+      {{"out", "selected:output:0"}});                      // Returns
+
+  tensorflow::Scope s = tensorflow::Scope::NewRootScope();
+  TF_ASSERT_OK(s.graph()->AddFunctionLibrary(library));
+
+  Output placeholder =
+      ops::Placeholder(s.WithOpName("Placeholder"), DataType::DT_FLOAT);
+  Output begin = ops::Const(s.WithOpName("begin"), {0}, {1});
+  Output end = ops::Const(s.WithOpName("end"), {1}, {1});
+  Output strides = ops::Const(s.WithOpName("strides"), {1}, {1});
+  Output pred = ops::Const(s.WithOpName("pred"), true, {1});
+
+  tensorflow::Node* func_op;
+  TF_ASSERT_OK(
+      tensorflow::NodeBuilder("MySliceSelectFunc", "MySliceSelectFunc",
+                              s.graph()->op_registry())
+          .Input(tensorflow::ops::AsNodeOut(s, placeholder))
+          .Input(tensorflow::ops::AsNodeOut(s, begin))
+          .Input(tensorflow::ops::AsNodeOut(s, end))
+          .Input(tensorflow::ops::AsNodeOut(s, strides))
+          .Input(tensorflow::ops::AsNodeOut(s, pred))
+          .Finalize(s.graph(), &func_op));
+
+  GrapplerItem item;
+  TF_ASSERT_OK(s.ToGraphDef(&item.graph));
+
+  GraphProperties properties(item);
+  TF_ASSERT_OK(properties.InferStatically(true));
+  const auto out_props = properties.GetOutputProperties("MySliceSelectFunc");
+  ASSERT_EQ(1, out_props.size());
+  const OpInfo::TensorProperties& out_prop0 = out_props[0];
+  EXPECT_EQ(DT_FLOAT, out_prop0.dtype());
+  EXPECT_TRUE(out_prop0.shape().unknown_rank());
+}
+
 TEST_F(GraphPropertiesTest, SimpleFunctionStaticShapeInference) {
   // Test graph produced in python using:
   /*
