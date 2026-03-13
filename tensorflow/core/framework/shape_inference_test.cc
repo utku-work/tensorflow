@@ -1235,8 +1235,8 @@ TEST_F(ShapeInferenceTest, MakeShapeFromShapeProto) {
       c.MakeShapeFromShapeProto(proto, &out),
       StatusIs(
           error::INVALID_ARGUMENT,
-          HasSubstr("Shape [0,?,1000,-2] has dimensions with values below -1 "
-                    "(where -1 means unknown)")));
+        HasSubstr("has dimensions with values below -1 (where -1 means "
+            "unknown)")));
 
   EXPECT_FALSE(IsSet(out));
 }

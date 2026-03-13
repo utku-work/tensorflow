@@ -1103,6 +1103,14 @@ absl::Status InferenceContext::Divide(DimensionHandle dividend,
   const bool dividend_known = ValueKnown(dividend);
   const bool divisor_known = ValueKnown(divisor);
 
+  // A raw negative literal such as -1 is represented as a DimensionOrConstant
+  // sentinel value, but Divide should still reject it as an invalid divisor
+  // rather than treating it like an unknown dimension.
+  if (!divisor.dim.IsSet() && divisor.val < 0) {
+    return errors::InvalidArgument("Divisor must be positive but is ",
+                                   divisor.val);
+  }
+
   // Validate divisor if known.
   if (divisor_known && Value(divisor) <= 0) {
     return errors::InvalidArgument("Divisor must be positive but is ",
