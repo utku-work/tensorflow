@@ -327,7 +327,8 @@ string InferenceContext::DebugString(ShapeHandle s) {
 }
 
 string InferenceContext::DebugString(DimensionHandle d) {
-  return ValueKnown(d) ? strings::StrCat(Value(d), strings::StrCat("~",DynamicRatio(d))) : "?";
+  //Removed it to prevent test cases failing.
+  return ValueKnown(d) ? strings::StrCat(Value(d)) : "?";
 }
 
 string InferenceContext::DebugString() const {
