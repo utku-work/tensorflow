@@ -1466,6 +1466,90 @@ TEST_F(ShapeInferenceTest, SubtractBuildsExpectedExpressionTrees) {
   }
 }
 
+TEST_F(ShapeInferenceTest, MultiplyBuildsExpectedExpressionTrees) {
+  NodeDef def;
+  std::vector<ShapeHandle> empty;
+  InferenceContext c(kVersion, def, MakeOpDef(0, 2), empty, {}, {}, {});
+
+  auto make_var_dim = [&c](int32_t var_id) {
+    return c.UnknownDimWithExpr(DimExpr::Var(var_id));
+  };
+  auto make_add_dim = [&c](std::unique_ptr<DimExpr> lhs,
+                           std::unique_ptr<DimExpr> rhs) {
+    return c.UnknownDimWithExpr(
+        std::make_unique<ExprAdd>(lhs.release(), rhs.release()));
+  };
+  auto serialize_expr = [&c](DimensionHandle dim) {
+    ExpressionProto proto;
+    DimExpr* expr = c.GetDimExpr(dim);
+    EXPECT_NE(expr, nullptr);
+    if (expr != nullptr) {
+      expr->ToProto(&proto);
+    }
+    return proto;
+  };
+
+  // Case 1: Var(-1) * Var(-1) should remain a binary Mul tree with both
+  // variable leaves preserved exactly.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Multiply(make_var_dim(-1), make_var_dim(-1), &out));
+    ExpressionProto proto = serialize_expr(out);
+    ASSERT_EQ(ExpressionProto::kMulNode, proto.node_type_case());
+    EXPECT_EQ(ExpressionProto::kVariableId,
+              proto.mul_node().lhs().node_type_case());
+    EXPECT_EQ(-1, proto.mul_node().lhs().variable_id());
+    EXPECT_EQ(ExpressionProto::kVariableId,
+              proto.mul_node().rhs().node_type_case());
+    EXPECT_EQ(-1, proto.mul_node().rhs().variable_id());
+  }
+
+  // Case 2: Var(-1) * Var(2) should keep the distinct variable ids on the
+  // left- and right-hand sides instead of collapsing them to a generic unknown.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Multiply(make_var_dim(-1), make_var_dim(2), &out));
+    ExpressionProto proto = serialize_expr(out);
+    ASSERT_EQ(ExpressionProto::kMulNode, proto.node_type_case());
+    EXPECT_EQ(-1, proto.mul_node().lhs().variable_id());
+    EXPECT_EQ(2, proto.mul_node().rhs().variable_id());
+  }
+
+  // Case 3: Var(-1) * (Var(-1) + Const(3)) should serialize as a nested tree
+  // so downstream code can still recover the compound right-hand side.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Multiply(make_var_dim(-1),
+                            make_add_dim(DimExpr::Var(-1), DimExpr::Cons(3)),
+                            &out));
+    ExpressionProto proto = serialize_expr(out);
+    ASSERT_EQ(ExpressionProto::kMulNode, proto.node_type_case());
+    EXPECT_EQ(-1, proto.mul_node().lhs().variable_id());
+    ASSERT_EQ(ExpressionProto::kAddNode,
+              proto.mul_node().rhs().node_type_case());
+    EXPECT_EQ(-1, proto.mul_node().rhs().add_node().lhs().variable_id());
+    ASSERT_EQ(ExpressionProto::kConstantValue,
+              proto.mul_node().rhs().add_node().rhs().node_type_case());
+    EXPECT_EQ(3, proto.mul_node().rhs().add_node().rhs().constant_value());
+  }
+
+  // Case 4: Var(-1) * (Var(-1) + Var(2)) should preserve the fully nested
+  // operand tree, including the mixed variable ids inside the compound rhs.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Multiply(make_var_dim(-1),
+                            make_add_dim(DimExpr::Var(-1), DimExpr::Var(2)),
+                            &out));
+    ExpressionProto proto = serialize_expr(out);
+    ASSERT_EQ(ExpressionProto::kMulNode, proto.node_type_case());
+    EXPECT_EQ(-1, proto.mul_node().lhs().variable_id());
+    ASSERT_EQ(ExpressionProto::kAddNode,
+              proto.mul_node().rhs().node_type_case());
+    EXPECT_EQ(-1, proto.mul_node().rhs().add_node().lhs().variable_id());
+    EXPECT_EQ(2, proto.mul_node().rhs().add_node().rhs().variable_id());
+  }
+}
+
 TEST_F(ShapeInferenceTest, UnknownShapeOfRank) {
   NodeDef def;
   std::vector<ShapeHandle> empty;
