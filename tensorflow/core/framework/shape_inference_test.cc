@@ -1267,6 +1267,37 @@ TEST_F(ShapeInferenceTest, UnknownDim) {
   EXPECT_FALSE(SameHandle(d0, d1));
 }
 
+TEST_F(ShapeInferenceTest, ExprForDimBaseCases) {
+  NodeDef def;
+  std::vector<ShapeHandle> empty;
+  InferenceContext c(kVersion, def, MakeOpDef(0, 2), empty, {}, {}, {});
+
+  // Tagged unknown dimensions should return the attached symbolic expression.
+  auto tagged_unknown = c.UnknownDimWithExpr(DimExpr::Var(7));
+  DimExpr* tagged_expr = c.GetDimExpr(tagged_unknown);
+  ASSERT_NE(tagged_expr, nullptr);
+  EXPECT_EQ(DimExpr::Kind::kVariable, tagged_expr->kind());
+  ExpressionProto tagged_proto;
+  tagged_expr->ToProto(&tagged_proto);
+  EXPECT_EQ(7, tagged_proto.variable_id());
+  EXPECT_TRUE(DimExpr::Equals(tagged_expr, c.ExprForDim(tagged_unknown)));
+
+  // Known dimensions are materialized as constant expressions on demand.
+  auto known_dim = c.MakeDim(6);
+  EXPECT_EQ(nullptr, c.GetDimExpr(known_dim));
+  DimExpr* known_expr = c.ExprForDim(known_dim);
+  ASSERT_NE(known_expr, nullptr);
+  EXPECT_EQ(DimExpr::Kind::kConstant, known_expr->kind());
+  ExpressionProto known_proto;
+  known_expr->ToProto(&known_proto);
+  EXPECT_EQ(6, known_proto.constant_value());
+
+  // Plain unknown dimensions without attached expressions stay expressionless.
+  auto plain_unknown = c.UnknownDim();
+  EXPECT_EQ(nullptr, c.GetDimExpr(plain_unknown));
+  EXPECT_EQ(nullptr, c.ExprForDim(plain_unknown));
+}
+
 TEST_F(ShapeInferenceTest, UnknownShapeOfRank) {
   NodeDef def;
   std::vector<ShapeHandle> empty;
