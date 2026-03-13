@@ -1635,6 +1635,52 @@ TEST_F(ShapeInferenceTest, DivideBuildsExpectedExpressionTrees) {
   }
 }
 
+TEST_F(ShapeInferenceTest, PlainUnknownsDoNotInventExpressionTrees) {
+  NodeDef def;
+  std::vector<ShapeHandle> empty;
+  InferenceContext c(kVersion, def, MakeOpDef(0, 2), empty, {}, {}, {});
+
+  auto plain_unknown = c.UnknownDim();
+  auto expr_unknown = c.UnknownDimWithExpr(DimExpr::Var(-1));
+  auto expect_plain_unknown = [&c](DimensionHandle dim) {
+    EXPECT_EQ("?", c.DebugString(dim));
+    EXPECT_EQ(nullptr, c.GetDimExpr(dim));
+    EXPECT_EQ(nullptr, c.ExprForDim(dim));
+  };
+
+  // Adding a plain unknown to an expression-bearing dimension must not invent
+  // a new symbolic tree, because one operand still lacks any expression source.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Add(plain_unknown, expr_unknown, &out));
+    expect_plain_unknown(out);
+  }
+
+  // Subtraction has the same boundary: a plain unknown operand keeps the
+  // result expressionless even when the other side has a symbolic variable.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Subtract(plain_unknown, expr_unknown, &out));
+    expect_plain_unknown(out);
+  }
+
+  // Multiplication must also fall back to a plain unknown instead of creating
+  // a partial expression tree from only one expression-bearing operand.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Multiply(plain_unknown, expr_unknown, &out));
+    expect_plain_unknown(out);
+  }
+
+  // Division should preserve the same non-goal boundary when only one operand
+  // can contribute a symbolic expression.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Divide(plain_unknown, expr_unknown, true, &out));
+    expect_plain_unknown(out);
+  }
+}
+
 TEST_F(ShapeInferenceTest, UnknownShapeOfRank) {
   NodeDef def;
   std::vector<ShapeHandle> empty;
