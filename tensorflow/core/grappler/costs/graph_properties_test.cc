@@ -781,6 +781,53 @@ TEST_F(GraphPropertiesTest, WhileLoop) {
   EXPECT_NE(shape_in.dim(0).size(), shape_out.dim(0).size());
 }
 
+TEST_F(GraphPropertiesTest, MoreInformativeCompoundExprBeatsPlainVar) {
+  // Reuse the while-loop graph where the loop input batch dimension starts as
+  // a plain symbolic variable and the loop body updates it through concat,
+  // producing a compound expression on the same logical dimension.
+  GrapplerItem item;
+  string filename = io::JoinPath(testing::TensorFlowSrcRoot(), kTestDataPath,
+                                 "while_loop.pbtxt");
+  TF_ASSERT_OK(ReadGraphDefFromFile(filename, &item.graph));
+
+  GraphProperties properties(item);
+  TF_ASSERT_OK(properties.InferStatically(false));
+
+  auto is_compound = [](const ExpressionProto& expr) {
+    switch (expr.node_type_case()) {
+      case ExpressionProto::kAddNode:
+      case ExpressionProto::kSubNode:
+      case ExpressionProto::kMulNode:
+      case ExpressionProto::kDivNode:
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  // The loop input placeholder should export a plain variable expression on
+  // its unknown batch dimension.
+  const auto& input_props = properties.GetOutputProperties("ones");
+  ASSERT_EQ(1, input_props.size());
+  ASSERT_EQ(2, input_props[0].shape().dim_size());
+  ASSERT_EQ(ExpressionProto::kVariableId,
+            input_props[0].shape().dim(0).expr().node_type_case());
+
+  // The loop merge should prefer the more informative compound expression from
+  // the loop body over the original plain variable for that same batch dim.
+  const auto& merge_props = properties.GetOutputProperties("while/Merge_1");
+  ASSERT_EQ(1, merge_props.size());
+  ASSERT_EQ(2, merge_props[0].shape().dim_size());
+  EXPECT_TRUE(is_compound(merge_props[0].shape().dim(0).expr()));
+
+  // The loop exit should keep exporting that compound category rather than
+  // regressing back to the plain variable form.
+  const auto& exit_props = properties.GetOutputProperties("while/Exit_1");
+  ASSERT_EQ(1, exit_props.size());
+  ASSERT_EQ(2, exit_props[0].shape().dim_size());
+  EXPECT_TRUE(is_compound(exit_props[0].shape().dim(0).expr()));
+}
+
 TEST_F(GraphPropertiesTest, NestedLoop) {
   // Test graph produced in python using:
   /*
