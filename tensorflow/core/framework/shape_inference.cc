@@ -929,12 +929,7 @@ absl::Status InferenceContext::MakeShapeFromPartialTensorShape(
   for (int i = 0; i < num_dims; ++i) {
     // -1 is unknown in PartialTensorShape and in InferenceContext, so this size
     // can be passed directly to MakeDim.
-    if(i == 0){
-      dims[i] = MakeDim(partial_shape.dim_size(i), 1);
-    }
-    else {
-      dims[i] = MakeDim(partial_shape.dim_size(i));
-    }
+    dims[i] = MakeDim(partial_shape.dim_size(i));
   }
   return ReturnCreatedShape(dims, out);
 }
@@ -962,38 +957,8 @@ absl::Status InferenceContext::MakeShapeFromShapeProto(
     const TensorShapeProto& proto, ShapeHandle* out) {
   *out = nullptr;
   TF_RETURN_IF_ERROR(PartialTensorShape::IsValidShape(proto));
-
-  if (proto.unknown_rank()) {
-    *out = UnknownShape();
-    return absl::OkStatus();
-  }
-
-  std::vector<DimensionHandle> dims;
-  dims.reserve(proto.dim_size());
-  for (int i = 0; i < proto.dim_size(); ++i) {
-    const auto& dim_proto = proto.dim(i);
-    if (dim_proto.size() >= 0) {
-      // Known dimension
-      dims.push_back(MakeDim(dim_proto.size()));
-    } else {
-      // Unknown dimension - check for expression
-      if (dim_proto.has_expr() && dim_proto.expr().node_type_case() !=
-                                      ExpressionProto::NODE_TYPE_NOT_SET) {
-        // Deserialize expression
-        std::unique_ptr<DimExpr> expr = DimExpr::FromProto(dim_proto.expr());
-        if (expr) {
-          DimExpr* owned = shape_manager_.OwnExpr(std::move(expr));
-          dims.push_back(shape_manager_.MakeDim(kUnknownDim,/*dynamic_ratio */ 0, owned));
-        } else {
-          dims.push_back(UnknownDim());
-        }
-      } else {
-        dims.push_back(UnknownDim());
-      }
-    }
-  }
-  *out = MakeShape(dims);
-  return absl::OkStatus();
+  PartialTensorShape partial_shape(proto);
+  return MakeShapeFromPartialTensorShape(partial_shape, out);
 }
 
 absl::Status InferenceContext::GetScalarFromTensor(const Tensor* t,
