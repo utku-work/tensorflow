@@ -1752,6 +1752,38 @@ TEST_F(ShapeInferenceTest, ShapeProtoRoundTripPreservesExpressions) {
   EXPECT_EQ(nullptr, c.GetDimExpr(c.Dim(round_tripped, 1)));
 }
 
+TEST_F(ShapeInferenceTest, MergePreservesExpressionsOnlyWhenExprHandleWins) {
+  NodeDef def;
+  std::vector<ShapeHandle> empty;
+  InferenceContext c(kVersion, def, MakeOpDef(0, 2), empty, {}, {}, {});
+
+  auto expr_unknown = c.UnknownDimWithExpr(std::make_unique<ExprAdd>(
+      DimExpr::Var(-1).release(), DimExpr::Cons(3).release()));
+  auto plain_unknown = c.UnknownDim();
+
+  // When the expression-bearing unknown is the first argument, Merge returns
+  // that handle for an unknown/unknown merge, so the attached expression is
+  // preserved on the result.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Merge(expr_unknown, plain_unknown, &out));
+    EXPECT_TRUE(SameHandle(expr_unknown, out));
+    DimExpr* expr = c.GetDimExpr(out);
+    ASSERT_NE(expr, nullptr);
+    EXPECT_TRUE(DimExpr::Equals(c.GetDimExpr(expr_unknown), expr));
+  }
+
+  // When the plain unknown is first, Merge still returns the first unknown
+  // handle, so the expression is dropped even though the second operand had it.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Merge(plain_unknown, expr_unknown, &out));
+    EXPECT_TRUE(SameHandle(plain_unknown, out));
+    EXPECT_EQ(nullptr, c.GetDimExpr(out));
+    EXPECT_EQ(nullptr, c.ExprForDim(out));
+  }
+}
+
 TEST_F(ShapeInferenceTest, UnknownShapeOfRank) {
   NodeDef def;
   std::vector<ShapeHandle> empty;
