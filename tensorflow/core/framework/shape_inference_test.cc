@@ -1784,6 +1784,39 @@ TEST_F(ShapeInferenceTest, MergePreservesExpressionsOnlyWhenExprHandleWins) {
   }
 }
 
+TEST_F(ShapeInferenceTest, RelaxReturnsNewUnknownAndDropsOldExpressions) {
+  NodeDef def;
+  std::vector<ShapeHandle> empty;
+  InferenceContext c(kVersion, def, MakeOpDef(0, 2), empty, {}, {}, {});
+
+  auto expr_unknown = c.UnknownDimWithExpr(std::make_unique<ExprAdd>(
+      DimExpr::Var(-1).release(), DimExpr::Cons(3).release()));
+  auto plain_unknown = c.UnknownDim();
+
+  // When relaxing an expression-bearing unknown against a plain unknown,
+  // Relax returns the new handle and intentionally forgets the old merge
+  // relationships, so the result no longer carries the old expression tree.
+  {
+    DimensionHandle out;
+    Relax(&c, expr_unknown, plain_unknown, &out);
+    EXPECT_TRUE(SameHandle(plain_unknown, out));
+    EXPECT_EQ(nullptr, c.GetDimExpr(out));
+    EXPECT_EQ(nullptr, c.ExprForDim(out));
+  }
+
+  // Reversing the operand order still returns the second handle for the
+  // unknown/unknown case, so the old expression-bearing handle is replaced
+  // rather than preserved.
+  {
+    DimensionHandle out;
+    Relax(&c, plain_unknown, expr_unknown, &out);
+    EXPECT_TRUE(SameHandle(expr_unknown, out));
+    DimExpr* expr = c.GetDimExpr(out);
+    ASSERT_NE(expr, nullptr);
+    EXPECT_TRUE(DimExpr::Equals(c.GetDimExpr(expr_unknown), expr));
+  }
+}
+
 TEST_F(ShapeInferenceTest, UnknownShapeOfRank) {
   NodeDef def;
   std::vector<ShapeHandle> empty;
