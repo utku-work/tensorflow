@@ -1681,6 +1681,35 @@ TEST_F(ShapeInferenceTest, PlainUnknownsDoNotInventExpressionTrees) {
   }
 }
 
+TEST_F(ShapeInferenceTest, MinAndMaxDoNotPropagateExpressionTrees) {
+  NodeDef def;
+  std::vector<ShapeHandle> empty;
+  InferenceContext c(kVersion, def, MakeOpDef(0, 2), empty, {}, {}, {});
+
+  auto expr_unknown = c.UnknownDimWithExpr(DimExpr::Var(-1));
+  auto expect_plain_unknown = [&c](DimensionHandle dim) {
+    EXPECT_EQ("?", c.DebugString(dim));
+    EXPECT_EQ(nullptr, c.GetDimExpr(dim));
+    EXPECT_EQ(nullptr, c.ExprForDim(dim));
+  };
+
+  // Min is currently outside symbolic-expression propagation, so even an
+  // expression-bearing operand should still produce a plain unknown result.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Min(expr_unknown, c.UnknownDim(), &out));
+    expect_plain_unknown(out);
+  }
+
+  // Max has the same current non-goal boundary: it returns a plain unknown
+  // rather than synthesizing or preserving a symbolic expression tree.
+  {
+    DimensionHandle out;
+    TF_ASSERT_OK(c.Max(expr_unknown, c.UnknownDim(), &out));
+    expect_plain_unknown(out);
+  }
+}
+
 TEST_F(ShapeInferenceTest, UnknownShapeOfRank) {
   NodeDef def;
   std::vector<ShapeHandle> empty;
