@@ -1710,6 +1710,48 @@ TEST_F(ShapeInferenceTest, MinAndMaxDoNotPropagateExpressionTrees) {
   }
 }
 
+TEST_F(ShapeInferenceTest, ShapeProtoRoundTripPreservesExpressions) {
+  NodeDef def;
+  std::vector<ShapeHandle> empty;
+  InferenceContext c(kVersion, def, MakeOpDef(0, 2), empty, {}, {}, {});
+
+  // Build a nested symbolic expression so the round-trip proves we preserve
+  // real tree structure, not just a single variable marker.
+  auto expr_dim = c.UnknownDimWithExpr(std::make_unique<ExprAdd>(
+      DimExpr::Var(-1).release(),
+      std::make_unique<ExprMul>(DimExpr::Var(1).release(),
+                                DimExpr::Cons(3).release())
+          .release()));
+  auto shape = c.MakeShape({expr_dim, c.MakeDim(5)});
+
+  // Exporting to proto should store the unknown dimension expression in
+  // dim.expr while keeping the known dimension purely numeric.
+  TensorShapeProto proto;
+  c.ShapeHandleToProto(shape, &proto);
+  ASSERT_FALSE(proto.unknown_rank());
+  ASSERT_EQ(2, proto.dim_size());
+  EXPECT_EQ(-1, proto.dim(0).size());
+  ASSERT_EQ(ExpressionProto::kAddNode, proto.dim(0).expr().node_type_case());
+  EXPECT_EQ(-1, proto.dim(0).expr().add_node().lhs().variable_id());
+  ASSERT_EQ(ExpressionProto::kMulNode,
+            proto.dim(0).expr().add_node().rhs().node_type_case());
+  EXPECT_EQ(1,
+            proto.dim(0).expr().add_node().rhs().mul_node().lhs().variable_id());
+  EXPECT_EQ(3, proto.dim(0).expr().add_node().rhs().mul_node().rhs().constant_value());
+  EXPECT_EQ(5, proto.dim(1).size());
+  EXPECT_FALSE(proto.dim(1).has_expr());
+
+  // Importing the proto back into a shape should reconstruct the same nested
+  // symbolic tree on the unknown dimension.
+  ShapeHandle round_tripped;
+  TF_ASSERT_OK(c.MakeShapeFromShapeProto(proto, &round_tripped));
+  EXPECT_EQ("[?,5]", c.DebugString(round_tripped));
+  DimExpr* round_trip_expr = c.GetDimExpr(c.Dim(round_tripped, 0));
+  ASSERT_NE(round_trip_expr, nullptr);
+  EXPECT_TRUE(DimExpr::Equals(c.GetDimExpr(expr_dim), round_trip_expr));
+  EXPECT_EQ(nullptr, c.GetDimExpr(c.Dim(round_tripped, 1)));
+}
+
 TEST_F(ShapeInferenceTest, UnknownShapeOfRank) {
   NodeDef def;
   std::vector<ShapeHandle> empty;
