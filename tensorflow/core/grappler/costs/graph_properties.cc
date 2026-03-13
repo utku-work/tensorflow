@@ -1996,6 +1996,14 @@ class SymbolicShapeRefiner {
     for (int out = 0; out < ic->num_outputs(); ++out) {
       ShapeHandle s = ic->output(out);
 
+      if (!ic->RankKnown(s) && node->op() == "_Arg") {
+        // Treat batched function arguments as vectors with batch dim at dim0.
+        DimensionHandle d0 = GetUnknownOutputDim(node, out, /*dim_index=*/0);
+        ShapeHandle vec = ic->MakeShape({d0});
+        ic->set_output(out, vec);
+        s = vec;
+      }
+
       if (!ic->RankKnown(s)){
         //if Rank is not realized yet, get it from attr.
         auto it = node->attr().find("_output_shapes");
