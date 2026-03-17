@@ -55,6 +55,12 @@ absl::Status ShapeHandleToTensorShape(
     auto ratio = context->DynamicRatio(context->Dim(handle, i));
     dyn_exprs[i] = ratio > 0 ? (ratio * *xla::DynExpr::V(1))->s()
                              : xla::DynExpr::_(dims[i]);  // For now
+    if (ratio <= 0 && dims[i] == -1) {
+      LOG(INFO) << "[EXPR][ALIGN][SHAPE_INFER] attaching constant -1 expression "
+                << "to non-dynamic unknown dim index=" << i
+                << " rank=" << dims.size()
+                << "; this can make DebugString print values like 3<-1>.";
+    }
   }
   auto status =
       PartialTensorShape::MakePartialShape(dims.data(), dims.size(), shape);

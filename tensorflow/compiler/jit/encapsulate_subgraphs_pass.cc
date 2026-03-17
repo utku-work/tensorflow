@@ -257,6 +257,7 @@ void LogExpressionsViaGraphProperties(const tensorflow::Graph& graph) {
       const TensorShapeProto& shp = tp.shape();
 
       std::vector<std::unique_ptr<DimExpr>> exprs;
+      std::vector<int> expr_dims;
       for (int d = 0; d < shp.dim_size(); ++d) {
         const auto& dim = shp.dim(d);
 
@@ -269,8 +270,18 @@ void LogExpressionsViaGraphProperties(const tensorflow::Graph& graph) {
 
         auto ex = ExprFromProto(expr);
         exprs.push_back(std::move(ex));
+        expr_dims.push_back(d);
 
         ++found;
+      }
+      if (!expr_dims.empty()) {
+        LOG(INFO) << "[EXPR][ALIGN][GP] node=" << n.name()
+                  << " output=" << out_idx << " rank=" << shp.dim_size()
+                  << " expr_dims=" << absl::StrJoin(expr_dims, ",")
+                  << " packed_expr_count=" << exprs.size()
+                  << " shape=" << TensorShape::DebugString(shp)
+                  << "; expressions are currently stored as a packed list "
+                     "without original dimension ids.";
       }
       if (shp.dim_size() == 0 && shp.unknown_rank()) continue;
       list_exprs[out_idx] = std::move(exprs);
@@ -675,10 +686,23 @@ absl::Status Encapsulator::Subgraph::RecordArg(
       std::vector<std::unique_ptr<DimExpr>> expressions =
           std::move(expr_map[src_node->name()][src_slot]);
 
+      if (!expressions.empty()) {
+        LOG(INFO) << "[EXPR][ALIGN][ARG] node=" << src_node->name()
+                  << " src_slot=" << src_slot
+                  << " rank=" << shape.dim_size()
+                  << " packed_expr_count=" << expressions.size()
+                  << " original_shape=" << TensorShape::DebugString(shape)
+                  << "; serializing proto.expressions as packed indices 0..N-1 "
+                     "without the original dimension number.";
+      }
+
       for (int i = 0; i < expressions.size(); i++) {
         auto ee = DimExprToDynExpr(std::move(expressions[i]).get())->s();
         ExpressionProto* eproto = tsp->add_expressions();
         ExprToProto(ee, eproto);
+        LOG(INFO) << "[EXPR][ALIGN][ARG] node=" << src_node->name()
+                  << " src_slot=" << src_slot << " packed_expr_index=" << i
+                  << " serialized_expr=" << eproto->DebugString();
       }
       VLOG(1) << "Adding following output shapes for node " << src_node->name()
               << " : " << tsp->DebugString();
