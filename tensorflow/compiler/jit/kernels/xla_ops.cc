@@ -544,6 +544,18 @@ absl::Status CompileToLocalExecutable(
           const auto& exp = proto.expressions();
           TensorShape& shp = std::get<TensorShape>(norm_args[arg_index].shape);
 
+          if (!exp.empty()) {
+            LOG(INFO) << "[EXPR][ALIGN][COMPILE] function=" << function.name()
+                      << " arg_index=" << arg_index
+                      << " runtime_rank=" << shp.dims()
+                      << " runtime_shape=" << shp.DebugString()
+                      << " output_shape_proto="
+                      << TensorShape::DebugString(proto)
+                      << " packed_expr_count=" << exp.size()
+                      << "; compile path assumes proto.expressions[j] belongs "
+                         "to runtime dim j.";
+          }
+
           if (!filled_batch && xla_batch_matcher) {
             for (int idx = 0; idx < exp.size(); ++idx) {
               // Look for dynamic expression. If found then compute padding
@@ -566,6 +578,12 @@ absl::Status CompileToLocalExecutable(
           }
           for (int j = 0; j < exp.size(); ++j) {
             auto e = DimExprToDynExpr(ExprFromProto(exp[j]).get())->s();
+            LOG(INFO) << "[EXPR][ALIGN][COMPILE] function=" << function.name()
+                      << " arg_index=" << arg_index
+                      << " applying proto.expressions[" << j << "] to dim "
+                      << j << "; expr=" << exp[j].DebugString()
+                      << " current_dim_size="
+                      << (j < shp.dims() ? shp.dim_size(j) : -999999);
             if (e->is_dynamic()) {
               dyn_exprs[j] = e;
             }
