@@ -49,23 +49,10 @@ absl::Status ShapeHandleToTensorShape(
   if (!context->RankKnown(handle)) return absl::OkStatus();
 
   std::vector<int64_t> dims(context->Rank(handle));
-  std::vector<xla::DynExpr*> dyn_exprs(context->Rank(handle));
   for (int32_t i = 0, end = dims.size(); i < end; ++i) {
     dims[i] = context->Value(context->Dim(handle, i));
-    auto ratio = context->DynamicRatio(context->Dim(handle, i));
-    dyn_exprs[i] = ratio > 0 ? (ratio * *xla::DynExpr::V(1))->s()
-                             : xla::DynExpr::_(dims[i]);  // For now
-    if (ratio <= 0 && dims[i] == -1) {
-      LOG(INFO) << "[EXPR][ALIGN][SHAPE_INFER] attaching constant -1 expression "
-                << "to non-dynamic unknown dim index=" << i
-                << " rank=" << dims.size()
-                << "; this can make DebugString print values like 3<-1>.";
-    }
   }
-  auto status =
-      PartialTensorShape::MakePartialShape(dims.data(), dims.size(), shape);
-  shape->set_expressions(dyn_exprs);
-  return status;
+  return PartialTensorShape::MakePartialShape(dims.data(), dims.size(), shape);
 }
 
 absl::Status PropagateShapes(
