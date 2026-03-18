@@ -82,6 +82,11 @@ void ArgOp::Compute(OpKernelContext* ctx) {
     BatchSizeResource* bsr = nullptr;
     ScopedStepContainer* step_container = ctx->step_container();
 
+    OP_REQUIRES(ctx, dynamic_dim_ < val->dims(),
+                errors::InvalidArgument("_dynamic_dim ", dynamic_dim_,
+                                        " is out of range for input rank ",
+                                        val->dims()));
+
     OP_REQUIRES_OK(ctx, step_container->LookupOrCreate<BatchSizeResource>(
                             ctx->resource_manager(), BatchSizeResourceName, &bsr,
                             [](BatchSizeResource** ret) -> Status {
@@ -96,9 +101,13 @@ void ArgOp::Compute(OpKernelContext* ctx) {
       VLOG(1) << "Set batch_size from 0 to " << batch_size
               << ". step_id: " << ctx->step_id();
     } else if (bsr->GetBatchSize() != batch_size) {
-      VLOG(1) << "Warning: Set batch_size from " << bsr->GetBatchSize()
-              << ". step_id: " << ctx->step_id();
-      bsr->SetBatchSize(batch_size);
+      const int64_t current_batch_size = bsr->GetBatchSize();
+      bsr->Unref();
+      ctx->CtxFailure(errors::InvalidArgument(
+          "Inconsistent dynamic batch sizes within the same step: existing ",
+          current_batch_size, ", new ", batch_size, ", dynamic_dim=",
+          dynamic_dim_, ", step_id=", ctx->step_id()));
+      return;
     } else {
       VLOG(1) << "batch_size already set to " << batch_size;
     }
