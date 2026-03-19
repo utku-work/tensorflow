@@ -52,6 +52,16 @@ class ReshapeOp : public XlaOpKernel {
     OP_REQUIRES_OK(ctx,
                    ctx->ConstantInputAsIntVector(
                        1, &shape_input, xla::ValueInferenceMode::kUpperBound));
+    auto log_expr = [](const char* label, xla::DynExpr* expr) {
+      if (expr == nullptr) {
+        LOG(INFO) << "[reshape-debug] " << label << "=<null>";
+        return;
+      }
+      LOG(INFO) << "[reshape-debug] " << label << "=" << expr;
+    };
+    LOG(INFO) << "[reshape-debug] input_shape=" << input_shape.DebugString()
+              << " input_xla_shape=" << input_xla_shape->ToString()
+              << " requested_shape=" << xla::VectorString(shape_input);
     // Compute the output shape.  Determine product of specified
     // dimensions, and find the index of the unspecified one if there
     // is one.
@@ -63,6 +73,8 @@ class ReshapeOp : public XlaOpKernel {
     int ratio = 1;
     for (int d = 0; d < num_dims; ++d) {
       const int64_t size = shape_input[d];
+      LOG(INFO) << "[reshape-debug] begin dim=" << d << " size=" << size
+                << " ratio=" << ratio;
       if (size == -1) {
         OP_REQUIRES(
             ctx, unknown_index == -1,
@@ -71,6 +83,8 @@ class ReshapeOp : public XlaOpKernel {
         unknown_index = d;
         shape.AddDim(1);
         shape.AddExpression(xla::DynExpr::one);
+        LOG(INFO) << "[reshape-debug] dim=" << d
+                  << " marked as unknown reshape dimension";
       } else if (size == 0) {
         // We don't include zero-sized dimension in product, so that we can
         // still calculate number of elements for non-zero-sized dimensions and
@@ -78,6 +92,8 @@ class ReshapeOp : public XlaOpKernel {
         shape.AddDim(size);
         shape.AddExpression(xla::DynExpr::_(size));
         shape_has_zero_dim = true;
+        LOG(INFO) << "[reshape-debug] dim=" << d
+                  << " preserves explicit zero dimension";
       } else {
         xla::DynExpr* size_expr;
         OP_REQUIRES(ctx, size >= 0,
@@ -86,10 +102,21 @@ class ReshapeOp : public XlaOpKernel {
         shape.AddDim(size);
         xla::DynExpr* input_expr =
             d < input_shape.dims() ? input_shape.get_expression(d) : nullptr;
+        if (d < input_shape.dims()) {
+          LOG(INFO) << "[reshape-debug] dim=" << d
+                    << " input_dim_size=" << input_shape.dim_size(d);
+        } else {
+          LOG(INFO) << "[reshape-debug] dim=" << d
+                    << " has no matching input dimension";
+        }
+        log_expr("input_expr", input_expr);
         if (input_expr != nullptr && input_expr->is_dynamic()) {
           int old = input_shape.dim_size(d);
           bool is_split = (old > size);
           int local_ratio = ratio * (is_split ? old / size : size / old);
+          LOG(INFO) << "[reshape-debug] dim=" << d << " old=" << old
+                    << " size=" << size << " is_split=" << is_split
+                    << " local_ratio=" << local_ratio;
           xla::DynExpr* new_expr =
               (size > old)
                   ? *input_expr *
@@ -101,22 +128,34 @@ class ReshapeOp : public XlaOpKernel {
           // reset it to 1.
           ratio = is_split ? local_ratio : 1;
           size_expr = new_expr->s();
+          log_expr("size_expr_after_dynamic", size_expr);
+          LOG(INFO) << "[reshape-debug] dim=" << d
+                    << " updated ratio=" << ratio;
 
         } else {
-          if (ratio == 1){ // Nothing has been previously split.
+          if (ratio == 1) {  // Nothing has been previously split.
             size_expr = xla::DynExpr::_(size);
+            LOG(INFO) << "[reshape-debug] dim=" << d
+                      << " uses constant expression because ratio is 1";
           } else if (ratio == size) {  // The factor of the previous split is
                                        // the new dimension.
             size_expr = xla::DynExpr::_(size);
-            ratio = 1; // reset ratio
+            ratio = 1;  // reset ratio
+            LOG(INFO) << "[reshape-debug] dim=" << d
+                      << " consumes carried ratio exactly and resets ratio";
           } else {
-            // Should not happen.
-            size_expr = xla::DynExpr::_(-50);
+            size_expr = xla::DynExpr::_(size);
+            LOG(INFO) << "[reshape-debug] unexpected ratio carryover at dim="
+                      << d << " size=" << size << " ratio=" << ratio
+                      << " without dynamic input expression";
           }
         }
         shape.AddExpression(size_expr);
         product *= size;
         product_expr = (*product_expr * *size_expr);
+        LOG(INFO) << "[reshape-debug] dim=" << d << " product=" << product;
+        log_expr("size_expr_final", size_expr);
+        log_expr("product_expr", product_expr);
       }
     }
     auto input = ctx->Input(0);
@@ -141,6 +180,12 @@ class ReshapeOp : public XlaOpKernel {
       input_num_elements_expr = input_num_elements_expr->s();
       product_expr = product_expr->s();
       auto missing_expr = *input_num_elements_expr / *product_expr;
+      LOG(INFO) << "[reshape-debug] inferring unknown dim at index="
+                << unknown_index << " input_num_elements="
+                << input_num_elements << " known_product=" << product;
+      log_expr("input_num_elements_expr", input_num_elements_expr);
+      log_expr("known_product_expr", product_expr);
+      log_expr("missing_expr_before_simplify", missing_expr);
       if (!input_has_zero_dim) {
         if (input_xla_shape->is_static() ||
             input_xla_shape->dimensions().size() != 1) {
@@ -168,8 +213,9 @@ class ReshapeOp : public XlaOpKernel {
         }
       }
       shape.set_dim(unknown_index, missing);
-      shape.set_expression(
-          unknown_index, missing_expr->s());
+      shape.set_expression(unknown_index, missing_expr->s());
+      LOG(INFO) << "[reshape-debug] unknown dim resolved to size=" << missing;
+      log_expr("missing_expr_final", shape.get_expression(unknown_index));
     }
 
     OP_REQUIRES(ctx, shape.num_elements() == input_shape.num_elements(),
@@ -193,10 +239,11 @@ class ReshapeOp : public XlaOpKernel {
     const auto& dims = shape.dims();
     dims_are_dynamic.reserve(dims);
     output_dim_sizes.reserve(dims);
+    expressions.reserve(dims);
     for (int64_t i = 0; i < dims; ++i) {
       output_dim_sizes.push_back(
           xla::Reshape(xla::Slice(ctx->Input(1), {i}, {i + 1}, {1}), {}));
-      expressions.push_back(xla::DynExpr::_(-10));
+      expressions.push_back(shape.get_expression(i));
     }
     OP_REQUIRES_OK(
         ctx, ctx->ResolveInputDynamismIntoPredVector(1, &dims_are_dynamic));
@@ -215,7 +262,7 @@ class ReshapeOp : public XlaOpKernel {
       auto start = common_factors[i];
       auto end = common_factors[i + 1];
       bool input_is_dynamic = false;
-      xla::DynExpr* expression = xla::DynExpr::_(-20);
+      xla::DynExpr* expression = shape.get_expression(unknown_index);
       // product of all input dims in this group. E.g., in
       // reshape(Tensor([2, 3, 3]), [3, -1, 3]) product of the group
       // containing -1 will be 6.
