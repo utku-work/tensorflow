@@ -185,13 +185,11 @@ class UniqueOpBase : public XlaOpKernel {
       sort_keys.push_back(xla::Reshape(slice, {leading_size}, {leading_expr}));
       sort_types.push_back(input_shape.element_type());
     }
-    xla::Shape iota_shape =
-        xla::ShapeUtil::MakeShape(xla::S32, {leading_size}, {leading_expr});
-    if (!ShouldPopulateShapeExpressionsFromFlags()) {
-      iota_shape.clear_expressions();
-    } else {
-      iota_shape.set_expression(0, leading_expr);
-    }
+    xla::Shape iota_shape = ShouldPopulateShapeExpressionsFromFlags()
+                                ? xla::ShapeUtil::MakeShape(
+                                      xla::S32, {leading_size}, {leading_expr})
+                                : xla::ShapeUtil::MakeShape(xla::S32,
+                                                            {leading_size});
     auto iota = xla::Iota(ctx->builder(), iota_shape, 0);
     sort_keys.push_back(iota);
     sort_types.push_back(xla::S32);
