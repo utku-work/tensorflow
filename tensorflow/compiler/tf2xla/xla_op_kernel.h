@@ -20,6 +20,7 @@ limitations under the License.
 #include "absl/status/statusor.h"
 #include "absl/strings/string_view.h"
 #include "absl/types/span.h"
+#include "tensorflow/compiler/jit/flags.h"
 #include "tensorflow/compiler/tf2xla/xla_compiler.h"
 #include "tensorflow/compiler/tf2xla/xla_context.h"
 #include "tensorflow/compiler/tf2xla/xla_expression.h"
@@ -38,6 +39,12 @@ limitations under the License.
 #include "tensorflow/core/platform/status.h"
 
 namespace tensorflow {
+
+inline bool ShouldPopulateShapeExpressionsFromFlags() {
+    MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+    return flags->tf_xla_enable_dynamic_sizes ||
+                 flags->tf_xla_cluster_single_dynamic_dim;
+}
 
 class XlaOpKernelContext;
 

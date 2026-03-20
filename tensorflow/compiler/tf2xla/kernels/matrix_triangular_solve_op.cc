@@ -90,15 +90,20 @@ class MatrixTriangularSolveOp : public XlaOpKernel {
 MatrixTriangularSolveOp::Broadcast(xla::XlaOp lhs, const TensorShape& lhs_shape,
                                    xla::XlaOp rhs, const TensorShape& rhs_shape,
                                    const MatMulBCast& broadcast_helper) {
+  const bool use_shape_expressions = ShouldPopulateShapeExpressionsFromFlags();
   // Get the batch shape.
   int64_t m = lhs_shape.dim_size(lhs_shape.dims() - 1);
   int64_t n = rhs_shape.dim_size(rhs_shape.dims() - 1);
 
   TensorShape lhs_broadcast_shape(broadcast_helper.output_batch_shape());
   lhs_broadcast_shape.AddDim(m);
-  lhs_broadcast_shape.AddExpression(xla::DynExpr::_(m));
+  if (use_shape_expressions) {
+    lhs_broadcast_shape.AddExpression(xla::DynExpr::_(m));
+  }
   lhs_broadcast_shape.AddDim(m);
-  lhs_broadcast_shape.AddExpression(xla::DynExpr::_(m));
+  if (use_shape_expressions) {
+    lhs_broadcast_shape.AddExpression(xla::DynExpr::_(m));
+  }
   auto lhs_output = BroadcastTo(lhs, lhs_broadcast_shape.dim_sizes(),
                                 lhs_broadcast_shape.get_expressions());
   if (!lhs_output.ok()) {
@@ -108,9 +113,13 @@ MatrixTriangularSolveOp::Broadcast(xla::XlaOp lhs, const TensorShape& lhs_shape,
 
   TensorShape rhs_broadcast_shape(broadcast_helper.output_batch_shape());
   rhs_broadcast_shape.AddDim(m);
-  rhs_broadcast_shape.AddExpression(xla::DynExpr::_(m));
+  if (use_shape_expressions) {
+    rhs_broadcast_shape.AddExpression(xla::DynExpr::_(m));
+  }
   rhs_broadcast_shape.AddDim(n);
-  rhs_broadcast_shape.AddExpression(xla::DynExpr::_(n));
+  if (use_shape_expressions) {
+    rhs_broadcast_shape.AddExpression(xla::DynExpr::_(n));
+  }
   auto rhs_output = BroadcastTo(rhs, rhs_broadcast_shape.dim_sizes(),
                                 rhs_broadcast_shape.get_expressions());
   if (!rhs_output.ok()) {

@@ -2866,6 +2866,7 @@ cc_library(
         ":fifo_queue",
         ":queue_base",
         ":typed_queue",
+        "//tensorflow/compiler/jit:flags",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
         "//tensorflow/core:protos_all_cc",

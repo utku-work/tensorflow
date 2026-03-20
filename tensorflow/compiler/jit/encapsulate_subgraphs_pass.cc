@@ -73,6 +73,12 @@ const char* const kXlaHasReferenceVarsAttr = "_XlaHasReferenceVars";
 
 namespace {
 
+bool ShouldPopulateShapeExpressions() {
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  return flags->tf_xla_enable_dynamic_sizes ||
+         flags->tf_xla_cluster_single_dynamic_dim;
+}
+
 bool AreAllParentsGuaranteedConst(
     const Node& n,
     const absl::flat_hash_set<const Node*>& runtime_const_nodes) {
@@ -667,7 +673,8 @@ absl::Status Encapsulator::Subgraph::RecordArg(
     builder.Attr("index", arg_index);
     AttrSlice attrs = src_node->attrs();
     auto shape_attr = attrs.FindByString("_output_shapes");
-    if (shape_attr && shape_attr->has_list()) {
+    if (shape_attr && shape_attr->has_list() &&
+      ShouldPopulateShapeExpressions()) {
       AttrValue mutable_shape_attr = *shape_attr;
       const TensorShapeProto& shape = shape_attr->list().shape(src_slot);
       TensorShapeProto* tsp =

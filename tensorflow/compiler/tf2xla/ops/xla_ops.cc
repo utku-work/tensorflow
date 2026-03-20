@@ -24,6 +24,7 @@ limitations under the License.
 #include "absl/status/status.h"
 #include "absl/strings/match.h"
 #include "absl/strings/str_join.h"
+#include "tensorflow/compiler/jit/flags.h"
 #include "xla/service/shape_inference.h"
 #include "xla/shape.h"
 #include "xla/xla_data.pb.h"
@@ -46,6 +47,12 @@ limitations under the License.
 
 namespace tensorflow {
 namespace {
+
+bool ShouldPopulateShapeExpressions() {
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  return flags->tf_xla_enable_dynamic_sizes ||
+         flags->tf_xla_cluster_single_dynamic_dim;
+}
 
 // Helper shape function for operators that return an output with the same rank
 // as their first input.
@@ -1157,7 +1164,9 @@ xla::Shape GetShape(shape_inference::ShapeHandle shape_handle,
       xla::PrimitiveType::S64, dims,
       absl::InlinedVector<bool, 4>(dynamic_dims.begin(), dynamic_dims.end()));
 
-  sh.set_expressions(expressions);
+  if (ShouldPopulateShapeExpressions()) {
+    sh.set_expressions(expressions);
+  }
   return sh;
 }
 

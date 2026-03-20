@@ -19,6 +19,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/strings/str_cat.h"
+#include "tensorflow/compiler/jit/flags.h"
 #include "tensorflow/compiler/tf2xla/type_util.h"
 #include "xla/layout_util.h"
 #include "xla/shape_util.h"
@@ -28,6 +29,12 @@ limitations under the License.
 
 namespace tensorflow {
 namespace {
+
+bool ShouldPopulateShapeExpressions() {
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  return flags->tf_xla_enable_dynamic_sizes ||
+         flags->tf_xla_cluster_single_dynamic_dim;
+}
 
 absl::Status PopulateInfeedLayoutVector(const xla::Shape& shape,
                                         std::vector<int>* layouts) {
@@ -100,9 +107,11 @@ absl::Status XLAShapeToTensorShape(const xla::Shape& shape,
   for (int i = 0; i < shape.dimensions().size(); ++i) {
     TF_RETURN_IF_ERROR(tensor_shape->AddDimWithStatus(shape.dimensions(i)));
   }
-  std::vector<xla::DynExpr*> bexprs(shape.expressions().begin(),
-                                    shape.expressions().end());
-  tensor_shape->set_expressions(bexprs);
+  if (ShouldPopulateShapeExpressions()) {
+    std::vector<xla::DynExpr*> bexprs(shape.expressions().begin(),
+                                      shape.expressions().end());
+    tensor_shape->set_expressions(bexprs);
+  }
   return absl::OkStatus();
 }
 
@@ -185,7 +194,9 @@ xla::Shape TensorShapeToXLAShape(xla::PrimitiveType type,
   std::iota(layout.rbegin(), layout.rend(), 0);
   xla::Shape result =
       xla::ShapeUtil::MakeShapeWithDenseLayout(type, dimensions, layout);
-  result.set_expressions(expressions);
+  if (ShouldPopulateShapeExpressions()) {
+    result.set_expressions(expressions);
+  }
   return result;
 }
 
@@ -227,7 +238,9 @@ xla::Shape TensorShapeToXLAShape(xla::PrimitiveType type,
 
   auto shape =
       xla::ShapeUtil::MakeShapeWithDenseLayout(type, dimensions, layout);
-  shape.set_expressions(expressions);
+  if (ShouldPopulateShapeExpressions()) {
+    shape.set_expressions(expressions);
+  }
   return shape;
 }
 

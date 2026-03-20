@@ -20,6 +20,7 @@ limitations under the License.
 #include <deque>
 #include <vector>
 
+#include "tensorflow/compiler/jit/flags.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/framework/register_types.h"
 #include "tensorflow/core/framework/tensor.h"
@@ -33,6 +34,16 @@ limitations under the License.
 #include "tensorflow/core/util/batch_util.h"
 
 namespace tensorflow {
+
+namespace {
+
+bool ShouldPopulateShapeExpressions() {
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  return flags->tf_xla_enable_dynamic_sizes ||
+         flags->tf_xla_cluster_single_dynamic_dim;
+}
+
+}  // namespace
 
 PaddingFIFOQueue::PaddingFIFOQueue(
     int capacity, const DataTypeVector& component_dtypes,
@@ -402,11 +413,13 @@ std::vector<TensorShape> PaddingFIFOQueue::ConvertShapesPartialDimensionsToZero(
     TensorShape& shape = shapes[i];
     for (int d = 0; d < partial.dims(); ++d) {
       shape.AddDim(partial.dim_size(d) < 0 ? 0 : partial.dim_size(d));
-      xla::DynExpr* expr = partial.get_expression(d);
-      if (expr != nullptr && expr->is_constant() && expr->get_val() < 0) {
-        expr = xla::DynExpr::zero;
+      if (ShouldPopulateShapeExpressions()) {
+        xla::DynExpr* expr = partial.get_expression(d);
+        if (expr != nullptr && expr->is_constant() && expr->get_val() < 0) {
+          expr = xla::DynExpr::zero;
+        }
+        shape.AddExpression(expr);
       }
-      shape.AddExpression(expr);
     }
   }
   return shapes;

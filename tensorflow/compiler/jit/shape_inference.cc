@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
+#include "tensorflow/compiler/jit/flags.h"
 #include "tensorflow/compiler/jit/shape_inference_helpers.h"
 #include "tensorflow/core/common_runtime/shape_refiner.h"
 #include "tensorflow/core/framework/function.h"
@@ -41,6 +42,12 @@ namespace tensorflow {
 
 namespace {
 
+bool ShouldPopulateShapeExpressions() {
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  return flags->tf_xla_enable_dynamic_sizes ||
+         flags->tf_xla_cluster_single_dynamic_dim;
+}
+
 // Converts a shape inference handle to a PartialTensorShape.
 absl::Status ShapeHandleToTensorShape(
     shape_inference::InferenceContext* context,
@@ -58,7 +65,9 @@ absl::Status ShapeHandleToTensorShape(
   }
   auto status =
       PartialTensorShape::MakePartialShape(dims.data(), dims.size(), shape);
-  shape->set_expressions(dyn_exprs);
+  if (ShouldPopulateShapeExpressions()) {
+    shape->set_expressions(dyn_exprs);
+  }
   return status;
 }
 

@@ -20,6 +20,7 @@ limitations under the License.
 #include <iterator>
 #include <utility>
 
+#include "tensorflow/compiler/jit/flags.h"
 #include "tensorflow/core/framework/bounds_check.h"
 #include "tensorflow/core/lib/core/status.h"
 #include "xla/shape.h"
@@ -27,6 +28,12 @@ limitations under the License.
 
 namespace tensorflow {
 namespace {
+
+bool ShouldPopulateShapeExpressions() {
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  return flags->tf_xla_enable_dynamic_sizes ||
+         flags->tf_xla_cluster_single_dynamic_dim;
+}
 
 /// Constants
 constexpr int32_t kShrinkAxis = -1, kNewAxis = -2;
@@ -478,10 +485,14 @@ absl::Status ValidateStridedSliceOp(
                                                         : xla::DynExpr::zero);
       }
       processing_shape->AddDim(size_i);
-      processing_shape->AddExpression(size_i_expr->s());
+      if (ShouldPopulateShapeExpressions()) {
+        processing_shape->AddExpression(size_i_expr->s());
+      }
     } else {
       processing_shape->AddDim(-1);
-      processing_shape->AddExpression(xla::DynExpr::_(-1));
+      if (ShouldPopulateShapeExpressions()) {
+        processing_shape->AddExpression(xla::DynExpr::_(-1));
+      }
     }
   }
 
@@ -510,15 +521,19 @@ absl::Status ValidateStridedSliceOp(
         dense_spec.final_shape_gather_indices_sparse[dense_dim];
     if (gather_index >= 0) {
       final_shape->AddDim(processing_shape->dim_size(gather_index));
-      final_shape->AddExpression(
-          processing_shape->get_expression(gather_index));
+      if (ShouldPopulateShapeExpressions()) {
+        final_shape->AddExpression(
+            processing_shape->get_expression(gather_index));
+      }
       if (shape_spec != nullptr) {
         shape_spec->output_to_sparse_mapping.push_back(sparse_index);
         shape_spec->output_to_processing_mapping.push_back(gather_index);
       }
     } else if (gather_index == kNewAxis) {
       final_shape->AddDim(1);
-      final_shape->AddExpression(xla::DynExpr::one);
+      if (ShouldPopulateShapeExpressions()) {
+        final_shape->AddExpression(xla::DynExpr::one);
+      }
       if (shape_spec != nullptr) {
         shape_spec->output_to_sparse_mapping.push_back(-1);
         shape_spec->output_to_processing_mapping.push_back(-1);

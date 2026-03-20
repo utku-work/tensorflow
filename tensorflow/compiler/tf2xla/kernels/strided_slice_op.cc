@@ -66,6 +66,7 @@ class StridedSliceOp : public XlaOpKernel {
                         const StridedSliceShapeSpec& shape_spec,
                         const std::vector<bool>& begins_are_dynamic,
                         const std::vector<bool>& ends_are_dynamic) {
+    const bool use_shape_expressions = ShouldPopulateShapeExpressionsFromFlags();
     const TensorShape input_shape = ctx->InputShape(0);
     xla::XlaOp slice = ctx->Input(0);
     for (int64_t i = 0; i < ctx->InputShape("begin").dims(); ++i) {
@@ -82,9 +83,11 @@ class StridedSliceOp : public XlaOpKernel {
         partial_final_shape.set_dim(
             i,
             input_shape.dim_size(shape_spec.output_to_processing_mapping[i]));
-        partial_final_shape.set_expression(
+        if (use_shape_expressions) {
+          partial_final_shape.set_expression(
             i, input_shape.get_expression(
-                   shape_spec.output_to_processing_mapping[i]));
+               shape_spec.output_to_processing_mapping[i]));
+        }
       }
     }
 
@@ -100,8 +103,10 @@ class StridedSliceOp : public XlaOpKernel {
         // Use input shape to update unknown dimension of partial shape -- if a
         // dimension is unknown, we use input shape as bound.
         partial_processing_shape.set_dim(i, input_shape.dim_size(i));
-        partial_processing_shape.set_expression(i,
-                                                input_shape.get_expression(i));
+        if (use_shape_expressions) {
+          partial_processing_shape.set_expression(
+              i, input_shape.get_expression(i));
+        }
       }
     }
     TensorShape processing_shape;

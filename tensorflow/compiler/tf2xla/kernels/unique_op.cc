@@ -87,7 +87,9 @@ class UniqueOpBase : public XlaOpKernel {
                              xla::DynExpr* expr) {
     xla::XlaComputation cond, body;
     xla::Shape r1_shape = xla::ShapeUtil::MakeShape(xla::S32, {size});
-    r1_shape.set_expression(0, expr);
+    if (ShouldPopulateShapeExpressionsFromFlags()) {
+      r1_shape.set_expression(0, expr);
+    }
 
     const xla::Shape counter_shape = xla::ShapeUtil::MakeScalarShape(xla::S32);
     const xla::Shape& single_element_shape = counter_shape;
@@ -185,7 +187,11 @@ class UniqueOpBase : public XlaOpKernel {
     }
     xla::Shape iota_shape =
         xla::ShapeUtil::MakeShape(xla::S32, {leading_size}, {leading_expr});
-    iota_shape.set_expression(0, leading_expr);
+    if (!ShouldPopulateShapeExpressionsFromFlags()) {
+      iota_shape.clear_expressions();
+    } else {
+      iota_shape.set_expression(0, leading_expr);
+    }
     auto iota = xla::Iota(ctx->builder(), iota_shape, 0);
     sort_keys.push_back(iota);
     sort_types.push_back(xla::S32);

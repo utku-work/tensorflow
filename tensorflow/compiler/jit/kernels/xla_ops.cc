@@ -97,6 +97,12 @@ limitations under the License.
 namespace tensorflow {
 
 namespace {
+bool ShouldPopulateShapeExpressions() {
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  return flags->tf_xla_enable_dynamic_sizes ||
+         flags->tf_xla_cluster_single_dynamic_dim;
+}
+
 using XlaDeviceCompiler =
     DeviceCompiler<xla::LocalExecutable, xla::LocalClient>;
 using PjRtDeviceCompiler =
@@ -495,8 +501,7 @@ absl::Status CompileToLocalExecutable(
   XlaCompiler::CompileOptions compile_options =
       GenerateCompileOptions(has_ref_vars, may_alias_resource_update);
 
-  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
-  if (flags->tf_xla_enable_dynamic_sizes) {
+  if (ShouldPopulateShapeExpressions()) {
     // Rewriting the argument with expressions if they have dynamic
     // dimension, detecting dynamic dimension via either _dynamic_dim or
     // _output_shapes attr in the argument.
@@ -1206,8 +1211,7 @@ void XlaRunOp::Compute(OpKernelContext* ctx) {
 
   xla::ExecutableRunOptions run_options;
 
-  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
-  if (flags->tf_xla_enable_dynamic_sizes) {
+  if (ShouldPopulateShapeExpressions()) {
     bool is_set = false;
     std::set<int64_t> dyn_vals;
     const auto* comp_result = closure.compilation_result();

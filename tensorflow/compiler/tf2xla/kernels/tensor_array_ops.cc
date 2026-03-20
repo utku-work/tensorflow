@@ -150,6 +150,7 @@ class TensorArrayOp : public XlaOpKernel {
   }
 
   void Compile(XlaOpKernelContext* ctx) override {
+    const bool use_shape_expressions = ShouldPopulateShapeExpressionsFromFlags();
     int64_t size;
     OP_REQUIRES_OK(ctx, ctx->ConstantInputAsIntScalar(0, &size));
     OP_REQUIRES(ctx, size >= 0,
@@ -165,7 +166,9 @@ class TensorArrayOp : public XlaOpKernel {
       CHECK(element_shape_.AsTensorShape(&shape));
       TensorShape ta_shape;
       ta_shape.AddDim(size);
-      ta_shape.AddExpression(xla::DynExpr::_(size));
+      if (use_shape_expressions) {
+        ta_shape.AddExpression(xla::DynExpr::_(size));
+      }
       ta_shape.AppendShape(shape);
       xla::XlaOp zero = XlaHelpers::Zero(b, dtype_);
       value = xla::Broadcast(zero, ta_shape.dim_sizes(),
@@ -535,7 +538,9 @@ class TensorArraySplitOp : public XlaOpKernel {
 
     TensorShape ta_shape;
     ta_shape.AddDim(resource->max_array_size());
-    ta_shape.AddExpression(xla::DynExpr::_(resource->max_array_size()));
+    if (ShouldPopulateShapeExpressionsFromFlags()) {
+      ta_shape.AddExpression(xla::DynExpr::_(resource->max_array_size()));
+    }
     ta_shape.AppendShape(elem_shape);
 
     OP_REQUIRES(ctx, lengths.size() == resource->max_array_size(),
