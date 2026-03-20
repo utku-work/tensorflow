@@ -519,6 +519,40 @@ TEST(TensorShapeTest, AsProto) {
   EXPECT_EQ(sp.DebugString(), sp2.DebugString());
 }
 
+TEST(TensorShapeTest, DisabledModeIgnoresExpressionProtoPayloads) {
+  // Default test configuration keeps both dynamic-size flags disabled, so
+  // TensorShape should ignore serialized expression payloads during import.
+  ASSERT_FALSE(AreTensorShapeExpressionsEnabled());
+
+  TensorShapeProto proto;
+  proto.add_dim()->set_size(7);
+  proto.add_expressions()->set_variable_id(1);
+
+  TensorShape shape(proto);
+  EXPECT_EQ(1, shape.dims());
+  EXPECT_EQ(7, shape.dim_size(0));
+  EXPECT_TRUE(shape.get_expressions().empty());
+  EXPECT_EQ("[7]", shape.DebugString());
+
+  TensorShapeProto round_trip;
+  shape.AsProto(&round_trip);
+  EXPECT_EQ(0, round_trip.expressions_size());
+}
+
+TEST(TensorShapeTest, DisabledModeSkipsDirectExpressionMutation) {
+  // Direct callers may still try to attach expressions, but disabled mode
+  // should keep the shape expression-free instead of propagating them.
+  ASSERT_FALSE(AreTensorShapeExpressionsEnabled());
+
+  TensorShape shape({5});
+  shape.AddExpression(xla::DynExpr::V(1));
+  shape.set_expression(0, xla::DynExpr::V(2));
+  shape.set_expressions({xla::DynExpr::V(3)});
+
+  EXPECT_TRUE(shape.get_expressions().empty());
+  EXPECT_EQ("[5]", shape.DebugString());
+}
+
 // -----------------------------------------------------------------------
 // An old implementation of TensorShape using a different representation,
 // preserved here in the unittest to allow us to have a randomized unittest

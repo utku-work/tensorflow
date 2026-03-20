@@ -17,6 +17,7 @@ limitations under the License.
 #define TENSORFLOW_CORE_FRAMEWORK_TENSOR_SHAPE_H_
 
 #include <string>
+#include <vector>
 
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tensorflow/core/framework/types.pb.h"
@@ -31,6 +32,8 @@ limitations under the License.
 #include "xla/shape_dynexpr.h"
 
 namespace tensorflow {
+
+bool AreTensorShapeExpressionsEnabled();
 
 // START_SKIP_DOXYGEN
 template <class Shape>
@@ -83,12 +86,18 @@ class TensorShapeRep {
 
   // Get the array of dynamic multipliers.
   std::vector<xla::DynExpr*> get_expressions() const {
+    if (!AreTensorShapeExpressionsEnabled()) {
+      return {};
+    }
     return expressions_;
   }
 
   // Return the multiplier for a specific dynamic dimension.
   // -1 if the dimension is not dynamic.
   xla::DynExpr* get_expression(int64_t dimension) const {
+    if (!AreTensorShapeExpressionsEnabled()) {
+      return xla::DynExpr::_(-999);
+    }
     if (dimension < 0) return xla::DynExpr::_(-999);
     const size_t dim = static_cast<size_t>(dimension);
     if (dim >= expressions_.size()) {

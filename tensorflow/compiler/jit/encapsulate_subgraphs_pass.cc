@@ -38,6 +38,7 @@ limitations under the License.
 #include "tensorflow/core/common_runtime/optimization_registry.h"
 #include "tensorflow/core/common_runtime/shape_refiner.h"
 #include "tensorflow/core/framework/function.h"
+#include "tensorflow/core/framework/tensor_shape.h"
 #include "tensorflow/core/framework/graph_def_util.h"
 #include "tensorflow/core/framework/graph_to_functiondef.h"
 #include "tensorflow/core/framework/node_def_builder.h"
@@ -675,10 +676,12 @@ absl::Status Encapsulator::Subgraph::RecordArg(
       std::vector<std::unique_ptr<DimExpr>> expressions =
           std::move(expr_map[src_node->name()][src_slot]);
 
-      for (int i = 0; i < expressions.size(); i++) {
-        auto ee = DimExprToDynExpr(std::move(expressions[i]).get())->s();
-        ExpressionProto* eproto = tsp->add_expressions();
-        ExprToProto(ee, eproto);
+      if (AreTensorShapeExpressionsEnabled()) {
+        for (int i = 0; i < expressions.size(); i++) {
+          auto ee = DimExprToDynExpr(std::move(expressions[i]).get())->s();
+          ExpressionProto* eproto = tsp->add_expressions();
+          ExprToProto(ee, eproto);
+        }
       }
       VLOG(1) << "Adding following output shapes for node " << src_node->name()
               << " : " << tsp->DebugString();

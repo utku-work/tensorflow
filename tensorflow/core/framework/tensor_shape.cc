@@ -23,8 +23,29 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/macros.h"
 #include "tensorflow/core/util/overflow.h"
+#include "xla/parse_flags_from_env.h"
 
 namespace tensorflow {
+
+namespace {
+
+bool ComputeTensorShapeExpressionsEnabled() {
+  bool enable_dynamic_sizes = false;
+  bool cluster_single_dynamic_dim = false;
+  std::vector<tsl::Flag> flag_list = {
+      tsl::Flag("tf_xla_enable_dynamic_sizes", &enable_dynamic_sizes, ""),
+      tsl::Flag("tf_xla_cluster_single_dynamic_dim",
+                &cluster_single_dynamic_dim, "")};
+  xla::ParseFlagsFromEnvAndIgnoreUnknown("TF_XLA_FLAGS", flag_list);
+  return enable_dynamic_sizes || cluster_single_dynamic_dim;
+}
+
+}  // namespace
+
+bool AreTensorShapeExpressionsEnabled() {
+  static const bool enabled = ComputeTensorShapeExpressionsEnabled();
+  return enabled;
+}
 
 xla::DynExpr* ExprFromProto(const ExpressionProto& proto) {
   switch (proto.node_type_case()) {
@@ -251,8 +272,10 @@ TensorShapeBase<Shape>::TensorShapeBase(const TensorShapeProto& proto) {
     for (const auto& d : proto.dim()) {
       AddDim(d.size());
     }
-    for (const auto& e : proto.expressions()) {
-      AddExpression(ExprFromProto(e));
+    if (AreTensorShapeExpressionsEnabled()) {
+      for (const auto& e : proto.expressions()) {
+        AddExpression(ExprFromProto(e));
+      }
     }
   }
 }
@@ -293,8 +316,10 @@ absl::Status TensorShapeBase<Shape>::BuildTensorShapeBase(
         }
       }
     }
-    for (const auto& e : proto.expressions()) {
-      out->AddExpression(ExprFromProto(e));
+    if (AreTensorShapeExpressionsEnabled()) {
+      for (const auto& e : proto.expressions()) {
+        out->AddExpression(ExprFromProto(e));
+      }
     }
   }
   return absl::OkStatus();
@@ -481,19 +506,31 @@ void TensorShapeRep::Clear() {
 }
 
 void TensorShapeRep::set_expression(int d, xla::DynExpr* expr) {
+  if (!AreTensorShapeExpressionsEnabled()) {
+    expressions_.clear();
+    return;
+  }
   expressions_[d] = expr;
 }
 
 void TensorShapeRep::AddExpression(xla::DynExpr* expr) {
+  if (!AreTensorShapeExpressionsEnabled()) {
+    return;
+  }
   CHECK_LT(expressions_.size(), ndims_byte());
   expressions_.push_back(expr);
 }
 
 void TensorShapeRep::set_expressions(std::vector<xla::DynExpr*> exprs) {
+  if (!AreTensorShapeExpressionsEnabled()) {
+    expressions_.clear();
+    return;
+  }
   expressions_ = exprs;
 }
 
 void TensorShapeRep::ClearAllButDataType() {
+  expressions_.clear();
   if (tag() == REP_OUT_OF_LINE) {
     delete as64()->dims_;
   }
@@ -853,9 +890,11 @@ void TensorShapeBase<Shape>::AsProto(TensorShapeProto* proto) const {
     for (int i = 0; i < dims(); i++) {
       proto->add_dim()->set_size(dim_size(i));
     }
-    for (int i = 0; i < get_expressions().size(); i++) {
-      ExpressionProto* eproto = proto->add_expressions();
-      ExprToProto(get_expression(i), eproto);
+    if (AreTensorShapeExpressionsEnabled()) {
+      for (int i = 0; i < get_expressions().size(); i++) {
+        ExpressionProto* eproto = proto->add_expressions();
+        ExprToProto(get_expression(i), eproto);
+      }
     }
   }
 }
@@ -890,7 +929,7 @@ string TensorShapeRep::DebugString() const {
     } else {
       strings::StrAppend(&s, dim);
     }
-    if (shape.get_expression(i) != nullptr) {
+    if (AreTensorShapeExpressionsEnabled() && shape.get_expression(i) != nullptr) {
       strings::StrAppend(&s, "<");
       strings::StrAppend(&s, ExprToString(shape.get_expression(i)));
       strings::StrAppend(&s, ">");
@@ -918,15 +957,17 @@ string TensorShapeRep::DebugString(const TensorShapeProto& proto) {
     first = false;
   }
   strings::StrAppend(&s, "]");
-  strings::StrAppend(&s, "<");
-  first = true;
-  for (const auto& e : proto.expressions()) {
-    if (!first) strings::StrAppend(&s, ",");
-    auto exp = ExprFromProto(e);
-    strings::StrAppend(&s, ExprToString(exp));
-    first = false;
+  if (AreTensorShapeExpressionsEnabled()) {
+    strings::StrAppend(&s, "<");
+    first = true;
+    for (const auto& e : proto.expressions()) {
+      if (!first) strings::StrAppend(&s, ",");
+      auto exp = ExprFromProto(e);
+      strings::StrAppend(&s, ExprToString(exp));
+      first = false;
+    }
+    strings::StrAppend(&s, ">");
   }
-  strings::StrAppend(&s, ">");
   return s;
 }
 
