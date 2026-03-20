@@ -540,12 +540,14 @@ absl::Status CompileToLocalExecutable(
                   xla_batch_matcher->get_xla_compile_batch(shp.dim_size(idx));
             }
 
-            std::vector<xla::DynExpr*> dyn_exprs;
-            for (int d : shp.dim_sizes()) {
-              dyn_exprs.push_back(xla::DynExpr::_(d));
+            if (AreTensorShapeExpressionsEnabled()) {
+              std::vector<xla::DynExpr*> dyn_exprs;
+              for (int d : shp.dim_sizes()) {
+                dyn_exprs.push_back(xla::DynExpr::_(d));
+              }
+              dyn_exprs[idx] = xla::DynExpr::V(1);
+              shp.set_expressions(dyn_exprs);
             }
-            dyn_exprs[idx] = xla::DynExpr::V(1);
-            shp.set_expressions(dyn_exprs);
             continue;
           }
           auto it = attr_map.find("_output_shapes");
@@ -554,6 +556,10 @@ absl::Status CompileToLocalExecutable(
           const TensorShapeProto& proto = it->second.list().shape(0);
           const auto& exp = proto.expressions();
           TensorShape& shp = std::get<TensorShape>(norm_args[arg_index].shape);
+
+          if (!AreTensorShapeExpressionsEnabled()) {
+            continue;
+          }
 
           if (!filled_batch && xla_batch_matcher) {
             for (int idx = 0; idx < exp.size(); ++idx) {

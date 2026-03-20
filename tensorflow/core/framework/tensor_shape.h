@@ -86,18 +86,12 @@ class TensorShapeRep {
 
   // Get the array of dynamic multipliers.
   std::vector<xla::DynExpr*> get_expressions() const {
-    if (!AreTensorShapeExpressionsEnabled()) {
-      return {};
-    }
     return expressions_;
   }
 
   // Return the multiplier for a specific dynamic dimension.
   // -1 if the dimension is not dynamic.
   xla::DynExpr* get_expression(int64_t dimension) const {
-    if (!AreTensorShapeExpressionsEnabled()) {
-      return xla::DynExpr::_(-999);
-    }
     if (dimension < 0) return xla::DynExpr::_(-999);
     const size_t dim = static_cast<size_t>(dimension);
     if (dim >= expressions_.size()) {
