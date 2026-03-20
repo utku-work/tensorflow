@@ -1689,6 +1689,7 @@ tf_cuda_library(
         ":lib_internal",
         ":protos_all_cc",
         "//tensorflow/compiler/jit:common",
+        "//tensorflow/compiler/jit:flags",
         "//tensorflow/core/activity_watcher",
         "//tensorflow/core/config:flag_defs",
         "//tensorflow/core/example:feature_util",
