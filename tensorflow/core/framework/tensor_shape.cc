@@ -485,6 +485,7 @@ void TensorShapeRep::set_expression(int d, xla::DynExpr* expr) {
 }
 
 void TensorShapeRep::AddExpression(xla::DynExpr* expr) {
+  LOG(INFO) << "Adding expression " << ExprToString(expr) << " to dim " << expressions_.size();
   CHECK_LT(expressions_.size(), ndims_byte());
   expressions_.push_back(expr);
 }
