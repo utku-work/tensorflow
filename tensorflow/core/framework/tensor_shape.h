@@ -86,7 +86,29 @@ class TensorShapeRep {
 
   // Get the array of dynamic multipliers.
   std::vector<xla::DynExpr*> get_expressions() const {
-    return expressions_;
+    if (ndims_byte() == kUnknownRank) {
+      return {};
+    }
+    std::vector<xla::DynExpr*> exprs(ndims_byte());
+    for (int i = 0; i < ndims_byte(); ++i) {
+      if (i < expressions_.size() && expressions_[i] != nullptr) {
+        exprs[i] = expressions_[i];
+        continue;
+      }
+
+      int64_t dim = -1;
+      if (tag() == REP16) {
+        uint16 raw_dim = as16()->dims_[i];
+        dim = raw_dim == kUnknownRep16 ? -1 : raw_dim;
+      } else if (tag() == REP32) {
+        uint32 raw_dim = as32()->dims_[i];
+        dim = raw_dim == kUnknownRep32 ? -1 : raw_dim;
+      } else {
+        dim = (*as64()->dims_)[i];
+      }
+      exprs[i] = xla::DynExpr::_(dim);
+    }
+    return exprs;
   }
 
   // Return the multiplier for a specific dynamic dimension.

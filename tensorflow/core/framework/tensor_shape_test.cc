@@ -541,7 +541,7 @@ TEST(TensorShapeTest, DisabledModeIgnoresExpressionProtoPayloads) {
 
 TEST(TensorShapeTest, DisabledModeSkipsDirectExpressionMutation) {
   // Direct callers may still try to attach expressions, but disabled mode
-  // should keep the shape expression-free instead of propagating them.
+  // should keep symbolic propagation disabled and fall back to constants.
   ASSERT_FALSE(AreTensorShapeExpressionsEnabled());
 
   TensorShape shape({5});
@@ -549,7 +549,9 @@ TEST(TensorShapeTest, DisabledModeSkipsDirectExpressionMutation) {
   shape.set_expression(0, xla::DynExpr::V(2));
   shape.set_expressions({xla::DynExpr::V(3)});
 
-  EXPECT_TRUE(shape.get_expressions().empty());
+  ASSERT_EQ(1, shape.get_expressions().size());
+  EXPECT_TRUE(shape.get_expressions()[0]->is_constant());
+  EXPECT_EQ(5, shape.get_expressions()[0]->get_val());
   EXPECT_EQ("[5]", shape.DebugString());
 }
 
