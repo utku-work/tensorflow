@@ -47,6 +47,68 @@ TEST(TensorShapeTest, Default) {
   EXPECT_EQ(s.num_elements(), 1);
 }
 
+TEST(TensorShapeTest, ExpressionsAreOptionalMetadata) {
+  TensorShape s({3, 5});
+
+  EXPECT_FALSE(s.has_expression(0));
+  EXPECT_FALSE(s.has_expression(1));
+  EXPECT_EQ("[3,5]", s.DebugString());
+
+  TensorShapeProto proto = s.AsProto();
+  EXPECT_EQ(proto.expressions_size(), 0);
+
+  xla::DynExpr* expr = s.get_expression_or_constant(0);
+  ASSERT_NE(expr, nullptr);
+  EXPECT_TRUE(expr->is_constant());
+  EXPECT_EQ(expr->get_val(), 3);
+}
+
+TEST(TensorShapeTest, ClearRemovesExpressions) {
+  TensorShape s;
+  s.AddDim(7);
+  s.AddExpression(xla::DynExpr::V(1));
+  ASSERT_TRUE(s.has_expression(0));
+
+  s.Clear();
+
+  EXPECT_EQ(s.dims(), 0);
+  EXPECT_TRUE(s.get_expressions().empty());
+}
+
+TEST(TensorShapeTest, AppendShapeWithStatusPreservesExpressionState) {
+  TensorShape with_expr;
+  with_expr.AddDim(4);
+  with_expr.AddExpression(xla::DynExpr::V(1));
+
+  TensorShape without_expr({2});
+  TensorShape out;
+  TF_EXPECT_OK(out.AppendShapeWithStatus(with_expr));
+  TF_EXPECT_OK(out.AppendShapeWithStatus(without_expr));
+
+  EXPECT_TRUE(out.has_expression(0));
+  EXPECT_TRUE(out.has_expression(1));
+  EXPECT_EQ(out.get_expressions().size(), out.dims());
+}
+
+TEST(TensorShapeTest, RankChangingMutationsKeepExpressionsAligned) {
+  TensorShape s({3, 5});
+  s.set_expressions({xla::DynExpr::V(1), xla::DynExpr::_(5)});
+
+  s.InsertDim(1, 1);
+  EXPECT_EQ(s.get_expressions().size(), s.dims());
+  EXPECT_TRUE(s.has_expression(0));
+  EXPECT_TRUE(s.has_expression(1));
+  EXPECT_TRUE(s.has_expression(2));
+
+  s.set_dim(2, 7);
+  EXPECT_EQ(s.get_expressions().size(), s.dims());
+
+  s.RemoveDimRange(1, 2);
+  EXPECT_EQ(s.get_expressions().size(), s.dims());
+  EXPECT_TRUE(s.has_expression(0));
+  EXPECT_TRUE(s.has_expression(1));
+}
+
 TEST(TensorShapeTest, set_dim) {
   TensorShape s({10, 5});
 

@@ -330,15 +330,13 @@ absl::Status ValidateStridedSliceOp(
   *slice_dim0 = true;
   *is_simple_slice = true;
   processing_shape->Clear();
+  const bool track_expressions = !input_shape.get_expressions().empty();
   for (int i = 0; i < input_shape.dims(); ++i) {
     int64_t& begin_i = (*begin)[i];
     int64_t& end_i = (*end)[i];
     int64_t& stride_i = (*strides)[i];
     int64_t dim_i = input_shape.dim_size(i);
-    auto dim_exprs = input_shape.get_expressions();
-
-    xla::DynExpr* dim_i_expr =
-        i < dim_exprs.size() ? dim_exprs[i] : xla::DynExpr::_(dim_i);
+    xla::DynExpr* dim_i_expr = input_shape.get_expression_or_constant(i);
 
     if (stride_i == 0) {
       return errors::InvalidArgument("strides[", i, "] must be non-zero");
@@ -346,6 +344,10 @@ absl::Status ValidateStridedSliceOp(
     bool shrink_i = (dense_spec.shrink_axis_mask & (1 << i));
     if (dim_i == -1) {
       processing_shape->AddDim(shrink_i ? 1 : -1);
+      if (track_expressions) {
+        processing_shape->AddExpression(shrink_i ? xla::DynExpr::one
+                                                 : xla::DynExpr::_(-1));
+      }
       continue;
     }
 
@@ -478,10 +480,14 @@ absl::Status ValidateStridedSliceOp(
                                                         : xla::DynExpr::zero);
       }
       processing_shape->AddDim(size_i);
-      processing_shape->AddExpression(size_i_expr->s());
+      if (track_expressions) {
+        processing_shape->AddExpression(size_i_expr->s());
+      }
     } else {
       processing_shape->AddDim(-1);
-      processing_shape->AddExpression(xla::DynExpr::_(-1));
+      if (track_expressions) {
+        processing_shape->AddExpression(xla::DynExpr::_(-1));
+      }
     }
   }
 
@@ -510,15 +516,19 @@ absl::Status ValidateStridedSliceOp(
         dense_spec.final_shape_gather_indices_sparse[dense_dim];
     if (gather_index >= 0) {
       final_shape->AddDim(processing_shape->dim_size(gather_index));
-      final_shape->AddExpression(
-          processing_shape->get_expression(gather_index));
+      if (track_expressions) {
+        final_shape->AddExpression(
+            processing_shape->get_expression_or_constant(gather_index));
+      }
       if (shape_spec != nullptr) {
         shape_spec->output_to_sparse_mapping.push_back(sparse_index);
         shape_spec->output_to_processing_mapping.push_back(gather_index);
       }
     } else if (gather_index == kNewAxis) {
       final_shape->AddDim(1);
-      final_shape->AddExpression(xla::DynExpr::one);
+      if (track_expressions) {
+        final_shape->AddExpression(xla::DynExpr::one);
+      }
       if (shape_spec != nullptr) {
         shape_spec->output_to_sparse_mapping.push_back(-1);
         shape_spec->output_to_processing_mapping.push_back(-1);

@@ -19,6 +19,7 @@ limitations under the License.
 #include <vector>
 
 #include "absl/log/log.h"
+#include "tensorflow/compiler/tf2xla/dynamic_expression_utils.h"
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
 #include "tensorflow/compiler/tf2xla/xla_op_registry.h"
 #include "xla/hlo/builder/lib/constants.h"
@@ -47,6 +48,7 @@ class ReshapeOp : public XlaOpKernel {
                 errors::InvalidArgument("sizes input must be 1-D, not shape ",
                                         sizes_shape.DebugString()));
     const int64_t num_dims = sizes_shape.num_elements();
+    const bool track_expressions = ShouldTrackDynamicShapeExpressions();
 
     std::vector<int64_t> shape_input;
     OP_REQUIRES_OK(ctx,
@@ -70,14 +72,14 @@ class ReshapeOp : public XlaOpKernel {
                                     unknown_index, " and ", d));
         unknown_index = d;
         shape.AddDim(1);
-        shape.AddExpression(xla::DynExpr::one);
+        MaybeAddExpression(&shape, xla::DynExpr::one);
         ratio = 1;
       } else if (size == 0) {
         // We don't include zero-sized dimension in product, so that we can
         // still calculate number of elements for non-zero-sized dimensions and
         // therefore infer their shapes.
         shape.AddDim(size);
-        shape.AddExpression(xla::DynExpr::_(size));
+        MaybeAddExpression(&shape, xla::DynExpr::_(size));
         shape_has_zero_dim = true;
       } else {
         xla::DynExpr* size_expr;
@@ -85,8 +87,9 @@ class ReshapeOp : public XlaOpKernel {
                     errors::InvalidArgument(
                         "size ", d, " must be non-negative, not ", size));
         shape.AddDim(size);
-        xla::DynExpr* input_expr =
-            d < input_shape.dims() ? input_shape.get_expression(d) : nullptr;
+        xla::DynExpr* input_expr = d < input_shape.dims() && track_expressions
+                                       ? input_shape.get_expression(d)
+                                       : nullptr;
         if (input_expr != nullptr && input_expr->is_dynamic()) {
           int old = input_shape.dim_size(d);
           bool is_split = (old > size);
@@ -117,7 +120,7 @@ class ReshapeOp : public XlaOpKernel {
             }
           }
         }
-        shape.AddExpression(size_expr);
+        MaybeAddExpression(&shape, size_expr);
         product *= size;
         product_expr = (*product_expr * *size_expr);
       }
@@ -134,7 +137,9 @@ class ReshapeOp : public XlaOpKernel {
         if (input_shape.dim_size(dim) > 0 || !shape_has_zero_dim) {
           input_num_elements *= input_shape.dim_size(dim);
           input_num_elements_expr =
-              (*input_num_elements_expr * *input_shape.get_expression(dim))->s();
+              (*input_num_elements_expr *
+               *input_shape.get_expression_or_constant(dim))
+                  ->s();
         } else {
           input_has_zero_dim = true;
         }
@@ -165,14 +170,20 @@ class ReshapeOp : public XlaOpKernel {
               input, xla::Zero(ctx->builder(), input_xla_shape->element_type()),
               0, 0, padded_input_num - input_num_elements);
           input_shape.set_dim(0, padded_input_num);
-          input_shape.set_expression(
-              0, xla::DynExpr::_(
-                     padded_input_num));  // Issue here as it depends on ceil
+          if (track_expressions) {
+            if (input_shape.get_expressions().size() < input_shape.dims()) {
+              input_shape.set_expressions(input_shape.get_expressions_or_constants());
+            }
+            input_shape.set_expression(
+                0, xla::DynExpr::_(
+                       padded_input_num));  // Issue here as it depends on ceil
+          }
         }
       }
       shape.set_dim(unknown_index, missing);
-      shape.set_expression(
-          unknown_index, missing_expr->s());
+      if (track_expressions) {
+        shape.set_expression(unknown_index, missing_expr->s());
+      }
     }
 
     OP_REQUIRES(ctx, shape.num_elements() == input_shape.num_elements(),
@@ -186,7 +197,8 @@ class ReshapeOp : public XlaOpKernel {
 
     if (input_xla_shape->is_static()) {
       ctx->SetOutput(
-          0, xla::Reshape(input, shape.dim_sizes(), shape.get_expressions()));
+          0, xla::Reshape(input, shape.dim_sizes(),
+                          shape.get_expressions_or_constants()));
       return;
     }
 

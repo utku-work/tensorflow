@@ -84,7 +84,7 @@ class SparseToDenseOp : public XlaOpKernel {
     }
     xla::XlaBuilder* builder = context->builder();
     auto buffer = Broadcast(default_value, output_shape.dim_sizes(),
-                            output_shape.get_expressions());
+                            output_shape.get_expressions_or_constants());
     std::vector<bool> dynamic_dims;
     OP_REQUIRES_OK(
         context, context->ResolveInputDynamismIntoPredVector(1, &dynamic_dims));

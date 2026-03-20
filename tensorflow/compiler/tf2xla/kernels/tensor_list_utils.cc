@@ -471,6 +471,7 @@ absl::Status ExecuteTensorListPopBack(xla::XlaOp list, xla::XlaOp* list_result,
     xla::XlaOp read = xla::DynamicSlice(list_part, start_indices, slice_shape);
 
     slice_shape.erase(slice_shape.begin());
+    slice_exprs.erase(slice_exprs.begin());
     element_result_parts.push_back(
         xla::Reshape(read, slice_shape, slice_exprs));
     list_result_parts.push_back(list_part);

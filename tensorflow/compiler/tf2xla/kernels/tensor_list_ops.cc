@@ -132,7 +132,7 @@ absl::Status TryGetElementShapeFromInput(XlaOpKernelContext* ctx,
   }
 
   *shape = xla::ShapeUtil::MakeShape(dtype, partial_shape.dim_sizes(),
-                                     partial_shape.get_expressions());
+                                     partial_shape.get_expressions_or_constants());
   *got_shape = true;
   return absl::OkStatus();
 }
@@ -581,6 +581,7 @@ class TensorListSplitOp : public XlaOpKernel {
                                             xla::DynExpr::_(length)};
     for (int i = 1; i < element_dims.size(); i++) {
       new_dims.push_back(element_dims[i]);
+      new_exprs.push_back(element_exprs[i]);
     }
 
     xla::XlaOp reshaped = xla::Reshape(input_tensor, new_dims, new_exprs);

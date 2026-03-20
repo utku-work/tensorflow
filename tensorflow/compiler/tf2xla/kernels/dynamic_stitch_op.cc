@@ -19,6 +19,7 @@ limitations under the License.
 #include <cstdint>
 #include <vector>
 
+#include "tensorflow/compiler/tf2xla/dynamic_expression_utils.h"
 #include "tensorflow/compiler/tf2xla/shape_util.h"
 #include "tensorflow/compiler/tf2xla/type_util.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
@@ -174,12 +175,14 @@ class DynamicStitchOp : public XlaOpKernel {
       TensorShape new_shape;
       // first reshaped dimension is the number of indices for this input.
       new_shape.AddDim(indices[input_num].shape().dimensions(0));
-      new_shape.AddExpression(
+      MaybeAddExpression(
+          &new_shape,
           xla::DynExpr::_(indices[input_num].shape().dimensions(0)));
       // Then the rest are the common extra shape.
       for (int d = indices0_shape.dims(); d < data0_shape.dims(); d++) {
         new_shape.AddDim(data0_shape.dim_size(d));
-        new_shape.AddExpression(data0_shape.get_expression(d));
+        MaybeAddExpression(&new_shape,
+                           data0_shape.get_expression_or_constant(d));
       }
       // Get the data, shaped appropriately.
       auto handle = data[input_num];

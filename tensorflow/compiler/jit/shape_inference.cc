@@ -22,6 +22,7 @@ limitations under the License.
 #include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "tensorflow/compiler/jit/shape_inference_helpers.h"
+#include "tensorflow/compiler/tf2xla/dynamic_expression_utils.h"
 #include "tensorflow/core/common_runtime/shape_refiner.h"
 #include "tensorflow/core/framework/function.h"
 #include "tensorflow/core/framework/node_def_util.h"
@@ -49,16 +50,20 @@ absl::Status ShapeHandleToTensorShape(
   if (!context->RankKnown(handle)) return absl::OkStatus();
 
   std::vector<int64_t> dims(context->Rank(handle));
-  std::vector<xla::DynExpr*> dyn_exprs(context->Rank(handle));
   for (int32_t i = 0, end = dims.size(); i < end; ++i) {
     dims[i] = context->Value(context->Dim(handle, i));
-    auto ratio = context->DynamicRatio(context->Dim(handle, i));
-    dyn_exprs[i] = ratio > 0 ? (ratio * *xla::DynExpr::V(1))->s()
-                             : xla::DynExpr::_(dims[i]);  // For now
   }
   auto status =
       PartialTensorShape::MakePartialShape(dims.data(), dims.size(), shape);
-  shape->set_expressions(dyn_exprs);
+  if (ShouldTrackDynamicShapeExpressions()) {
+    std::vector<xla::DynExpr*> dyn_exprs(context->Rank(handle));
+    for (int32_t i = 0, end = dims.size(); i < end; ++i) {
+      auto ratio = context->DynamicRatio(context->Dim(handle, i));
+      dyn_exprs[i] = ratio > 0 ? (ratio * *xla::DynExpr::V(1))->s()
+                               : xla::DynExpr::_(dims[i]);  // For now
+    }
+    shape->set_expressions(dyn_exprs);
+  }
   return status;
 }
 

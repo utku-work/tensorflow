@@ -89,7 +89,7 @@ absl::Status XlaGather(const xla::XlaOp& input, const TensorShape& input_shape,
 
     *gather_output =
         xla::Broadcast(XlaHelpers::Zero(builder, dtype), out_shape.dim_sizes(),
-                       out_shape.get_expressions());
+                       out_shape.get_expressions_or_constants());
     return absl::OkStatus();
   }
 

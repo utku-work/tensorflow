@@ -112,6 +112,16 @@ tf_proto_library(
 )
 
 cc_library(
+    name = "dynamic_expression_utils",
+    hdrs = ["dynamic_expression_utils.h"],
+    visibility = [":friends"],
+    deps = [
+        "//tensorflow/compiler/jit:flags",
+        "@local_xla//xla:shape_util",
+    ],
+)
+
+cc_library(
     name = "graph_compiler_util",
     srcs = ["graph_compiler_util.cc"],
     hdrs = ["graph_compiler_util.h"],
@@ -1084,6 +1094,7 @@ tf_cc_test(
         "//tensorflow/cc:functional_ops",
         "//tensorflow/cc:ops",
         "//tensorflow/cc:resource_variable_ops",
+        "//tensorflow/compiler/jit:flags",
         "//tensorflow/compiler/tf2xla/kernels:xla_ops",
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",

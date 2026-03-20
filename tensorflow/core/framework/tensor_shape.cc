@@ -481,6 +481,16 @@ void TensorShapeRep::Clear() {
 }
 
 void TensorShapeRep::set_expression(int d, xla::DynExpr* expr) {
+  CHECK_GE(d, 0);
+  CHECK_LT(d, ndims_byte());
+  const auto& shape = *static_cast<const PartialTensorShape*>(this);
+  if (expressions_.size() < ndims_byte()) {
+    const size_t old_size = expressions_.size();
+    expressions_.resize(ndims_byte(), nullptr);
+    for (size_t i = old_size; i < expressions_.size(); ++i) {
+      expressions_[i] = xla::DynExpr::_(shape.dim_size(i));
+    }
+  }
   expressions_[d] = expr;
 }
 
@@ -490,6 +500,14 @@ void TensorShapeRep::AddExpression(xla::DynExpr* expr) {
 }
 
 void TensorShapeRep::set_expressions(std::vector<xla::DynExpr*> exprs) {
+  CHECK_LE(exprs.size(), ndims_byte());
+  const auto& shape = *static_cast<const PartialTensorShape*>(this);
+  if (!exprs.empty() && exprs.size() < ndims_byte()) {
+    exprs.reserve(ndims_byte());
+    for (size_t i = exprs.size(); i < ndims_byte(); ++i) {
+      exprs.push_back(xla::DynExpr::_(shape.dim_size(i)));
+    }
+  }
   expressions_ = exprs;
 }
 
@@ -497,6 +515,7 @@ void TensorShapeRep::ClearAllButDataType() {
   if (tag() == REP_OUT_OF_LINE) {
     delete as64()->dims_;
   }
+  expressions_.clear();
   set_tag(REP16);
   set_ndims_byte(0);
   // Leaves data_type alone
@@ -531,6 +550,7 @@ void TensorShapeBase<Shape>::AddDim(int64_t size) {
   if (!kIsPartial) CHECK_GE(size, 0);
   if (unknown_rank()) return;
   CHECK_LT(ndims_byte(), MaxDimensions()) << "Too many dimensions in tensor";
+  const bool track_expressions = !expressions_.empty();
   int64_t new_num_elements;
   if (kIsPartial && (num_elements() < 0 || size < 0)) {
     new_num_elements = -1;
@@ -539,6 +559,9 @@ void TensorShapeBase<Shape>::AddDim(int64_t size) {
     CHECK_LE(0, new_num_elements);
   }
   UnsafeAddDim(size, new_num_elements);
+  if (track_expressions) {
+    AddExpression(xla::DynExpr::_(size));
+  }
 }
 
 template <class Shape>
@@ -558,6 +581,7 @@ absl::Status TensorShapeBase<Shape>::AddDimWithStatus(int64_t size) {
     return errors::InvalidArgument("Too many dimensions in tensor");
   }
 
+  const bool track_expressions = !expressions_.empty();
   int64_t new_num_elements;
   if (kIsPartial && (num_elements() < 0 || size < 0)) {
     new_num_elements = -1;
@@ -571,6 +595,9 @@ absl::Status TensorShapeBase<Shape>::AddDimWithStatus(int64_t size) {
   }
 
   UnsafeAddDim(size, new_num_elements);
+  if (track_expressions) {
+    AddExpression(xla::DynExpr::_(size));
+  }
   return absl::OkStatus();
 }
 
@@ -622,21 +649,40 @@ void TensorShapeBase<Shape>::UnsafeAddDim(int64_t size,
 
 template <class Shape>
 void TensorShapeBase<Shape>::AppendShape(const TensorShapeBase& shape) {
+  const bool track_expressions =
+      !expressions_.empty() || !shape.get_expressions().empty();
+  std::vector<xla::DynExpr*> exprs;
+  if (track_expressions) {
+    exprs = get_expressions_or_constants();
+    auto suffix_exprs = shape.get_expressions_or_constants();
+    exprs.insert(exprs.end(), suffix_exprs.begin(), suffix_exprs.end());
+  }
   for (auto d : shape) AddDim(d.size);
-  for (auto e : shape.get_expressions()){
-     AddExpression(e);
+  if (track_expressions) {
+    set_expressions(exprs);
   }
 }
 
 template <class Shape>
 absl::Status TensorShapeBase<Shape>::AppendShapeWithStatus(
     const TensorShapeBase& shape) {
+  const bool track_expressions =
+      !expressions_.empty() || !shape.get_expressions().empty();
+  std::vector<xla::DynExpr*> exprs;
+  if (track_expressions) {
+    exprs = get_expressions_or_constants();
+    auto suffix_exprs = shape.get_expressions_or_constants();
+    exprs.insert(exprs.end(), suffix_exprs.begin(), suffix_exprs.end());
+  }
   absl::Status s = absl::OkStatus();
   for (auto d : shape) {
     s.Update(AddDimWithStatus(d.size));
     if (!s.ok()) {
       return s;
     }
+  }
+  if (track_expressions) {
+    set_expressions(exprs);
   }
   return s;
 }
@@ -647,12 +693,21 @@ void TensorShapeBase<Shape>::InsertDim(int d, int64_t size) {
   CHECK_LE(d, dims());
   if (!kIsPartial) CHECK_GE(size, 0);
   CHECK_LT(dims(), MaxDimensions());
+  const bool track_expressions = !expressions_.empty();
   absl::InlinedVector<int64_t, 8UL> vals;
   AppendTo(*this, &vals);
   vals.insert(vals.begin() + d, size);
+  std::vector<xla::DynExpr*> exprs;
+  if (track_expressions) {
+    exprs = get_expressions_or_constants();
+    exprs.insert(exprs.begin() + d, xla::DynExpr::_(size));
+  }
   ClearAllButDataType();
   for (auto dval : vals) {
     AddDim(dval);
+  }
+  if (track_expressions) {
+    set_expressions(exprs);
   }
 }
 
@@ -681,6 +736,12 @@ absl::Status TensorShapeBase<Shape>::InsertDimWithStatus(int d, int64_t size) {
   absl::InlinedVector<int64_t, 8UL> vals;
   AppendTo(*this, &vals);
   vals.insert(vals.begin() + d, size);
+  const bool track_expressions = !expressions_.empty();
+  std::vector<xla::DynExpr*> exprs;
+  if (track_expressions) {
+    exprs = get_expressions_or_constants();
+    exprs.insert(exprs.begin() + d, xla::DynExpr::_(size));
+  }
   ClearAllButDataType();
 
   absl::Status s = absl::OkStatus();
@@ -689,6 +750,9 @@ absl::Status TensorShapeBase<Shape>::InsertDimWithStatus(int d, int64_t size) {
     if (!s.ok()) {
       return s;
     }
+  }
+  if (track_expressions) {
+    set_expressions(exprs);
   }
   return s;
 }
@@ -706,7 +770,12 @@ template <class Shape>
 void TensorShapeBase<Shape>::set_dim(int d, int64_t size) {
   CHECK_GE(d, 0);
   CHECK_LT(d, dims());
-  if (get_expressions().size() > d) set_expression(d, xla::DynExpr::_(size));
+  const bool track_expressions = !expressions_.empty();
+  std::vector<xla::DynExpr*> exprs;
+  if (track_expressions) {
+    exprs = get_expressions_or_constants();
+    exprs[d] = xla::DynExpr::_(size);
+  }
   if (!kIsPartial) {
     CHECK_GE(size, 0);
   }
@@ -728,6 +797,9 @@ void TensorShapeBase<Shape>::set_dim(int d, int64_t size) {
       AddDim(dval);
     }
   }
+  if (track_expressions) {
+    set_expressions(exprs);
+  }
   TF_CHECK_OK(RecomputeNumElements());
 }
 
@@ -742,6 +814,13 @@ absl::Status TensorShapeBase<Shape>::SetDimWithStatus(int d, int64_t size) {
   }
   if (TF_PREDICT_FALSE(!kIsPartial && size < 0)) {
     return errors::InvalidArgument("Expected a non-negative size, got ", size);
+  }
+
+  const bool track_expressions = !expressions_.empty();
+  std::vector<xla::DynExpr*> exprs;
+  if (track_expressions) {
+    exprs = get_expressions_or_constants();
+    exprs[d] = xla::DynExpr::_(size);
   }
 
   if (tag() == REP16 && size < kMaxRep16) {
@@ -768,7 +847,9 @@ absl::Status TensorShapeBase<Shape>::SetDimWithStatus(int d, int64_t size) {
     }
   }
 
-  if (get_expressions().size() > d) set_expression(d, xla::DynExpr::_(size));
+  if (track_expressions) {
+    set_expressions(exprs);
+  }
   return RecomputeNumElements();
 }
 
@@ -782,12 +863,21 @@ void TensorShapeBase<Shape>::RemoveDimRange(int begin, int end) {
   CHECK_GE(end, 0);
   CHECK_LE(end, dims());
   if (begin >= end) return;
+  const bool track_expressions = !expressions_.empty();
   absl::InlinedVector<int64_t, 8UL> vals;
   AppendTo(*this, &vals);
   vals.erase(vals.begin() + begin, vals.begin() + end);
+  std::vector<xla::DynExpr*> exprs;
+  if (track_expressions) {
+    exprs = get_expressions_or_constants();
+    exprs.erase(exprs.begin() + begin, exprs.begin() + end);
+  }
   ClearAllButDataType();
   for (auto dval : vals) {
     AddDim(dval);
+  }
+  if (track_expressions) {
+    set_expressions(exprs);
   }
   TF_CHECK_OK(RecomputeNumElements());
 }
@@ -821,9 +911,15 @@ absl::Status TensorShapeBase<Shape>::RemoveDimRangeWithStatus(int begin,
     return absl::OkStatus();
   }
 
+  const bool track_expressions = !expressions_.empty();
   absl::InlinedVector<int64_t, 8UL> vals;
   AppendTo(*this, &vals);
   vals.erase(vals.begin() + begin, vals.begin() + end);
+  std::vector<xla::DynExpr*> exprs;
+  if (track_expressions) {
+    exprs = get_expressions_or_constants();
+    exprs.erase(exprs.begin() + begin, exprs.begin() + end);
+  }
   ClearAllButDataType();
 
   absl::Status s = absl::OkStatus();
@@ -832,6 +928,9 @@ absl::Status TensorShapeBase<Shape>::RemoveDimRangeWithStatus(int begin,
     if (!s.ok()) {
       return s;
     }
+  }
+  if (track_expressions) {
+    set_expressions(exprs);
   }
   return RecomputeNumElements();
 }
@@ -854,8 +953,12 @@ void TensorShapeBase<Shape>::AsProto(TensorShapeProto* proto) const {
       proto->add_dim()->set_size(dim_size(i));
     }
     for (int i = 0; i < get_expressions().size(); i++) {
+      xla::DynExpr* expr = get_expression(i);
+      if (expr == nullptr) {
+        continue;
+      }
       ExpressionProto* eproto = proto->add_expressions();
-      ExprToProto(get_expression(i), eproto);
+      ExprToProto(expr, eproto);
     }
   }
 }
@@ -890,7 +993,7 @@ string TensorShapeRep::DebugString() const {
     } else {
       strings::StrAppend(&s, dim);
     }
-    if (shape.get_expression(i) != nullptr) {
+    if (shape.has_expression(i)) {
       strings::StrAppend(&s, "<");
       strings::StrAppend(&s, ExprToString(shape.get_expression(i)));
       strings::StrAppend(&s, ">");
@@ -918,15 +1021,17 @@ string TensorShapeRep::DebugString(const TensorShapeProto& proto) {
     first = false;
   }
   strings::StrAppend(&s, "]");
-  strings::StrAppend(&s, "<");
-  first = true;
-  for (const auto& e : proto.expressions()) {
-    if (!first) strings::StrAppend(&s, ",");
-    auto exp = ExprFromProto(e);
-    strings::StrAppend(&s, ExprToString(exp));
-    first = false;
+  if (proto.expressions_size() > 0) {
+    strings::StrAppend(&s, "<");
+    first = true;
+    for (const auto& e : proto.expressions()) {
+      if (!first) strings::StrAppend(&s, ",");
+      auto exp = ExprFromProto(e);
+      strings::StrAppend(&s, ExprToString(exp));
+      first = false;
+    }
+    strings::StrAppend(&s, ">");
   }
-  strings::StrAppend(&s, ">");
   return s;
 }
 
@@ -1034,7 +1139,7 @@ PartialTensorShape PartialTensorShape::Concatenate(
     return PartialTensorShape();
   }
   PartialTensorShape out = *this;
-  for (auto dim : shape) out.AddDim(dim.size);
+  out.AppendShape(shape);
   return out;
 }
 
@@ -1045,12 +1150,7 @@ absl::Status PartialTensorShape::ConcatenateWithStatus(
     return absl::OkStatus();
   }
   *out = *this;
-  for (auto dim : shape) {
-    absl::Status s = out->AddDimWithStatus(dim.size);
-    if (!s.ok()) return s;
-  }
-
-  return absl::OkStatus();
+  return out->AppendShapeWithStatus(shape);
 }
 
 absl::Status PartialTensorShape::MergeWith(const PartialTensorShape& shape,
@@ -1090,7 +1190,20 @@ absl::Status PartialTensorShape::MergeWith(const PartialTensorShape& shape,
       return s;
     }
   }
-  result->set_expressions(shape.get_expressions());
+  if (!get_expressions().empty() || !shape.get_expressions().empty()) {
+    std::vector<xla::DynExpr*> exprs;
+    exprs.reserve(dims_);
+    for (int i = 0; i < dims_; ++i) {
+      if (shape.has_expression(i)) {
+        exprs.push_back(shape.get_expression_or_constant(i));
+      } else if (has_expression(i)) {
+        exprs.push_back(get_expression_or_constant(i));
+      } else {
+        exprs.push_back(xla::DynExpr::_(result->dim_size(i)));
+      }
+    }
+    result->set_expressions(exprs);
+  }
   return absl::OkStatus();
 }
 

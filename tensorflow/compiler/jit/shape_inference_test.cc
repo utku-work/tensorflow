@@ -28,6 +28,7 @@ limitations under the License.
 #include "tensorflow/cc/ops/math_ops.h"
 #include "tensorflow/cc/ops/resource_variable_ops.h"
 #include "tensorflow/cc/ops/standard_ops.h"
+#include "tensorflow/compiler/jit/flags.h"
 #include "tensorflow/compiler/jit/test_util.h"
 #include "xla/tsl/lib/core/status_test_util.h"
 #include "tensorflow/core/framework/op.h"
@@ -134,6 +135,72 @@ TEST(ShapeInferenceTest, UseArgShapesForVariableBatchSizeIncompleteUserArgs) {
       {"D", {PartialTensorShape({2, 3})}},
   };
   TF_EXPECT_OK(ShapeAnnotationsMatch(*graph, shape_info, expected));
+}
+
+TEST(ShapeInferenceTest, DefaultFlagsDoNotPopulateExpressions) {
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  struct FlagRestore {
+    MarkForCompilationPassFlags* flags;
+    bool dynamic_sizes;
+    bool single_dynamic_dim;
+    ~FlagRestore() {
+      flags->tf_xla_enable_dynamic_sizes = dynamic_sizes;
+      flags->tf_xla_cluster_single_dynamic_dim = single_dynamic_dim;
+    }
+  } restore{flags, flags->tf_xla_enable_dynamic_sizes,
+            flags->tf_xla_cluster_single_dynamic_dim};
+  flags->tf_xla_enable_dynamic_sizes = false;
+  flags->tf_xla_cluster_single_dynamic_dim = false;
+
+  Scope root = Scope::NewRootScope().ExitOnError();
+  auto a = ops::Placeholder(root.WithOpName("A"), DT_FLOAT,
+                            ops::Placeholder::Shape({2, 3}));
+  auto b = ops::Neg(root.WithOpName("B"), a);
+
+  std::unique_ptr<Graph> graph(new Graph(OpRegistry::Global()));
+  TF_CHECK_OK(root.ToGraph(graph.get()));
+
+  GraphShapeInfo shape_info;
+  TF_ASSERT_OK(InferShapes(graph.get(), /*arg_shapes=*/{},
+                           /*fnlib_def=*/nullptr, &shape_info));
+
+  ASSERT_NE(shape_info.find("A"), shape_info.end());
+  ASSERT_NE(shape_info.find("B"), shape_info.end());
+  EXPECT_TRUE(shape_info.at("A")[0].shape.get_expressions().empty());
+  EXPECT_TRUE(shape_info.at("B")[0].shape.get_expressions().empty());
+}
+
+TEST(ShapeInferenceTest, TrackingFlagsPopulateExpressions) {
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  struct FlagRestore {
+    MarkForCompilationPassFlags* flags;
+    bool dynamic_sizes;
+    bool single_dynamic_dim;
+    ~FlagRestore() {
+      flags->tf_xla_enable_dynamic_sizes = dynamic_sizes;
+      flags->tf_xla_cluster_single_dynamic_dim = single_dynamic_dim;
+    }
+  } restore{flags, flags->tf_xla_enable_dynamic_sizes,
+            flags->tf_xla_cluster_single_dynamic_dim};
+  flags->tf_xla_enable_dynamic_sizes = false;
+  flags->tf_xla_cluster_single_dynamic_dim = true;
+
+  Scope root = Scope::NewRootScope().ExitOnError();
+  auto a = ops::Placeholder(root.WithOpName("A"), DT_FLOAT,
+                            ops::Placeholder::Shape({2, 3}));
+  auto b = ops::Neg(root.WithOpName("B"), a);
+
+  std::unique_ptr<Graph> graph(new Graph(OpRegistry::Global()));
+  TF_CHECK_OK(root.ToGraph(graph.get()));
+
+  GraphShapeInfo shape_info;
+  TF_ASSERT_OK(InferShapes(graph.get(), /*arg_shapes=*/{},
+                           /*fnlib_def=*/nullptr, &shape_info));
+
+  ASSERT_NE(shape_info.find("A"), shape_info.end());
+  ASSERT_NE(shape_info.find("B"), shape_info.end());
+  EXPECT_EQ(shape_info.at("A")[0].shape.get_expressions().size(), 2);
+  EXPECT_EQ(shape_info.at("B")[0].shape.get_expressions().size(), 2);
 }
 
 TEST(ShapeInferenceTest, WhileLoop) {

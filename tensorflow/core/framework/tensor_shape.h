@@ -87,7 +87,8 @@ class TensorShapeRep {
   }
 
   // Return the multiplier for a specific dynamic dimension.
-  // -1 if the dimension is not dynamic.
+  // Returns the legacy -999 sentinel if the dimension has no stored
+  // expression.
   xla::DynExpr* get_expression(int64_t dimension) const {
     if (dimension < 0) return xla::DynExpr::_(-999);
     const size_t dim = static_cast<size_t>(dimension);
@@ -227,6 +228,36 @@ class TensorShapeBase : public TensorShapeRep {
 
   /// Returns `true` iff this is a valid tensor shape.
   bool IsValid();
+
+  bool has_expression(int64_t dimension) const {
+    if (dimension < 0) {
+      return false;
+    }
+    const size_t dim = static_cast<size_t>(dimension);
+    return dim < expressions_.size() && expressions_[dim] != nullptr;
+  }
+
+  xla::DynExpr* get_expression_or_constant(int64_t dimension) const {
+    if (has_expression(dimension)) {
+      return expressions_[dimension];
+    }
+    if (unknown_rank() || dimension < 0 || dimension >= dims()) {
+      return nullptr;
+    }
+    return xla::DynExpr::_(dim_size(dimension));
+  }
+
+  std::vector<xla::DynExpr*> get_expressions_or_constants() const {
+    std::vector<xla::DynExpr*> expressions;
+    if (unknown_rank()) {
+      return expressions;
+    }
+    expressions.reserve(dims());
+    for (int64_t d = 0; d < dims(); ++d) {
+      expressions.push_back(get_expression_or_constant(d));
+    }
+    return expressions;
+  }
 
   /// \brief Add a dimension to the end ("inner-most").
   /// REQUIRES: `size >= 0`

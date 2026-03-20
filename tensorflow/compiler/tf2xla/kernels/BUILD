@@ -711,6 +711,7 @@ tf_kernel_library(
     srcs = ["tensor_array_ops.cc"],
     deps = [
         ":gather_op",
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:common",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",
@@ -735,6 +736,7 @@ tf_kernel_library(
     name = "tile_ops",
     srcs = ["tile_ops.cc"],
     deps = [
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla:xla_context",
@@ -757,6 +759,7 @@ tf_kernel_library(
     name = "strided_slice_op",
     srcs = ["strided_slice_op.cc"],
     deps = [
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:common",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",
@@ -1528,6 +1531,7 @@ tf_kernel_library(
     srcs = ["pack_op.cc"],
     deps = [
         "//tensorflow/compiler/tf2xla:common",
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla:xla_context",
@@ -1834,6 +1838,7 @@ tf_kernel_library(
     name = "matrix_triangular_solve_op",
     srcs = ["matrix_triangular_solve_op.cc"],
     deps = [
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla:xla_context",
@@ -1875,6 +1880,7 @@ tf_kernel_library(
     deps = [
         ":reduction_ops",
         "//tensorflow/compiler/tf2xla:common",
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla:xla_context",
@@ -2021,6 +2027,7 @@ tf_kernel_library(
     srcs = ["dynamic_stitch_op.cc"],
     deps = [
         "//tensorflow/compiler/tf2xla:common",
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla:xla_context",
@@ -2093,6 +2100,7 @@ tf_kernel_library(
     srcs = ["reshape_op.cc"],
     deps = [
         "//tensorflow/compiler/tf2xla:common",
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla:xla_context",
@@ -2210,6 +2218,7 @@ tf_kernel_library(
     deps = [
         ":shape_util",
         ":tensor_list_utils",
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla:xla_context",
@@ -2692,6 +2701,7 @@ tf_kernel_library(
     name = "split_op",
     srcs = ["split_op.cc"],
     deps = [
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "//tensorflow/compiler/tf2xla:xla_context",
@@ -2950,6 +2960,7 @@ tf_kernel_library(
     name = "matrix_diag_ops",
     srcs = ["matrix_diag_ops.cc"],
     deps = [
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/compiler/tf2xla:mlir_xla_op_kernel",
         "//tensorflow/compiler/tf2xla:xla_compilation_device",
         "//tensorflow/compiler/tf2xla:xla_compiler",

@@ -81,7 +81,8 @@ class SplitOp : public XlaOpKernel {
     // All the slices are the same size: this is the size along the
     // split dimension.
     const int32_t slice_size = input_shape.dim_size(split_dim) / num_split;
-    auto slice_expr = *input_shape.get_expression(split_dim) / num_split;
+    auto slice_expr =
+        *input_shape.get_expression_or_constant(split_dim) / num_split;
 
     // The vectors we will use to define the slice. The entry for the
     // split dimensions varies for each output.
@@ -95,7 +96,7 @@ class SplitOp : public XlaOpKernel {
       // the split dimension is filled in below.
       int64_t dim = input_shape.dim_size(i);
       limits[i] = dim;
-      limits_expr[i] = input_shape.get_expression(i);
+      limits_expr[i] = input_shape.get_expression_or_constant(i);
     }
 
     // Create each of the outputs.

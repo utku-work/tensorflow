@@ -21,6 +21,7 @@ limitations under the License.
 
 #include "absl/algorithm/container.h"
 #include "Eigen/Core"  // from @eigen_archive
+#include "tensorflow/compiler/tf2xla/dynamic_expression_utils.h"
 #include "tensorflow/compiler/tf2xla/mlir_xla_op_kernel.h"
 #include "tensorflow/compiler/tf2xla/xla_helpers.h"
 #include "tensorflow/compiler/tf2xla/xla_op_kernel.h"
@@ -235,7 +236,7 @@ xla::XlaOp SetMatrixDiag(const xla::XlaOp input, const xla::XlaOp diag,
     // Broadcast and mask.
     xla::XlaOp diag_broadcast = xla::BroadcastInDim(
         diag_slice, input_shape.dim_sizes(), broadcast_dimensions,
-        input_shape.get_expressions());
+        input_shape.get_expressions_or_constants());
     const auto mask = xla::GetDiagonalMask(output, diag_index);
     output = xla::Select(mask, diag_broadcast, output);
   }
@@ -328,11 +329,11 @@ class MatrixDiagOp : public XlaOpKernel {
     TensorShape output_shape = diag_shape;
     output_shape.RemoveLastDims((num_diags == 1) ? 1 : 2);
     output_shape.AddDim(num_rows);
-    output_shape.AddExpression(xla::DynExpr::_(num_rows));
+    MaybeAddExpression(&output_shape, xla::DynExpr::_(num_rows));
     output_shape.AddDim(num_cols);
-    output_shape.AddExpression(xla::DynExpr::_(num_cols));
+    MaybeAddExpression(&output_shape, xla::DynExpr::_(num_cols));
     xla::XlaOp output = xla::Broadcast(padding_value, output_shape.dim_sizes(),
-                                       output_shape.get_expressions());
+                                       output_shape.get_expressions_or_constants());
     xla::XlaOp diag = context->Input(0);
     context->SetOutput(
         0, SetMatrixDiag(output, diag, output_shape, diag_rank, num_diags,
@@ -410,13 +411,13 @@ class MatrixDiagPartOp : public XlaOpKernel {
     const int num_diags = upper_diag_index - lower_diag_index + 1;
     if (num_diags > 1) {
       output_shape.AddDim(num_diags);
-      output_shape.AddExpression(xla::DynExpr::_(num_diags));
+      MaybeAddExpression(&output_shape, xla::DynExpr::_(num_diags));
     }
     const int32_t max_diag_len =
         std::min(num_rows + std::min(upper_diag_index, int64_t{0}),
                  num_cols - std::max(lower_diag_index, int64_t{0}));
     output_shape.AddDim(max_diag_len);
-    output_shape.AddExpression(xla::DynExpr::_(max_diag_len));
+    MaybeAddExpression(&output_shape, xla::DynExpr::_(max_diag_len));
 
     // Computes output.
     xla::XlaOp input = context->Input(0);
@@ -456,7 +457,7 @@ class MatrixDiagPartOp : public XlaOpKernel {
     auto concat =
         xla::ConcatInDim(context->builder(), diag_list, input_rank - 2);
     context->SetOutput(0, xla::Reshape(concat, output_shape.dim_sizes(),
-                                       output_shape.get_expressions()));
+                                       output_shape.get_expressions_or_constants()));
   }
 
  private:
@@ -530,13 +531,13 @@ class MatrixSetDiagOp : public XlaOpKernel {
     expected_diag_shape.RemoveLastDims(2);
     if (num_diags > 1) {
       expected_diag_shape.AddDim(num_diags);
-      expected_diag_shape.AddExpression(xla::DynExpr::_(num_diags));
+      MaybeAddExpression(&expected_diag_shape, xla::DynExpr::_(num_diags));
     }
     const int32_t max_diag_len =
         std::min(num_rows + std::min(upper_diag_index, int64_t{0}),
                  num_cols - std::max(lower_diag_index, int64_t{0}));
     expected_diag_shape.AddDim(max_diag_len);
-    expected_diag_shape.AddExpression(xla::DynExpr::_(max_diag_len));
+    MaybeAddExpression(&expected_diag_shape, xla::DynExpr::_(max_diag_len));
     OP_REQUIRES(
         context, expected_diag_shape == diag_shape,
         errors::InvalidArgument(

@@ -1009,6 +1009,7 @@ cc_library(
     visibility = [":friends"],
     deps = [
         ":shape_inference_helpers",
+        "//tensorflow/compiler/tf2xla:dynamic_expression_utils",
         "//tensorflow/core:core_cpu_internal",
         "//tensorflow/core:framework",
         "//tensorflow/core:lib",
@@ -1038,6 +1039,7 @@ tf_cc_test(
     name = "shape_inference_test",
     srcs = ["shape_inference_test.cc"],
     deps = [
+        ":flags",
         ":shape_inference",
         ":test_util",
         "//tensorflow/cc:cc_ops",

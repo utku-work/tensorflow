@@ -179,7 +179,7 @@ xla::Shape TensorShapeToXLAShape(xla::PrimitiveType type,
                       "shape; returning unknown sentinel value";
       return xla::ShapeUtil::MakeShapeWithDenseLayout(type, {0}, {0});
     }
-    expressions[d] = tensor_shape.get_expression(d);
+    expressions[d] = tensor_shape.get_expression_or_constant(d);
   }
   // XLA uses minor-to-major; Tensorflow uses major-to-minor.
   std::iota(layout.rbegin(), layout.rend(), 0);
@@ -217,9 +217,7 @@ xla::Shape TensorShapeToXLAShape(xla::PrimitiveType type,
 
   for (int d = 0; d < rank; ++d) {
     dimensions[d] = tensor_shape.dim_size(d);
-    expressions[d] = (d < tensor_shape.get_expressions().size())
-                         ? tensor_shape.get_expression(d)
-                         : xla::DynExpr::_(dimensions[d]);
+    expressions[d] = tensor_shape.get_expression_or_constant(d);
   }
 
   // XLA uses minor-to-major; Tensorflow uses major-to-minor.

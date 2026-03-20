@@ -270,6 +270,7 @@ class MaxPoolOp : public PoolingOp {
       new_dims[1] /= *vect_width;
       new_exprs[1] = *new_exprs[1] / *vect_width;
       new_dims.insert(new_dims.begin() + 2, *vect_width);
+      new_exprs.insert(new_exprs.begin() + 2, xla::DynExpr::_(*vect_width));
       pooling = xla::Transpose(xla::Reshape(pooling, new_dims, new_exprs),
                                {0, 1, 3, 4, 2});
     }

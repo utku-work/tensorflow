@@ -27,6 +27,7 @@ limitations under the License.
 #include "tensorflow/cc/ops/math_ops.h"
 #include "tensorflow/cc/ops/resource_variable_ops.h"
 #include "tensorflow/cc/ops/standard_ops.h"
+#include "tensorflow/compiler/jit/flags.h"
 #include "tensorflow/compiler/tf2xla/literal_util.h"
 #include "tensorflow/compiler/tf2xla/shape_util.h"
 #include "tensorflow/compiler/tf2xla/side_effect_util.h"
@@ -633,6 +634,63 @@ TEST_F(XlaCompilerTest, HasSaneErrorOnNonCompileTimeConstantInputToReshape) {
   EXPECT_TRUE(
       absl::StrContains(status.message(), "must be a compile-time constant"))
       << status.message();
+}
+
+TEST_F(XlaCompilerTest,
+       TensorShapeToXLAShapeUsesConstantsForMissingExpressions) {
+  TensorShape shape({2, 3});
+  xla::Shape xla_shape;
+
+  TF_ASSERT_OK(TensorShapeToXLAShape(DT_INT32, shape, &xla_shape));
+
+  ASSERT_EQ(xla_shape.expressions().size(), 2);
+  ASSERT_NE(xla_shape.expressions(0), nullptr);
+  ASSERT_NE(xla_shape.expressions(1), nullptr);
+  EXPECT_TRUE(xla_shape.expressions(0)->is_constant());
+  EXPECT_TRUE(xla_shape.expressions(1)->is_constant());
+  EXPECT_EQ(xla_shape.expressions(0)->get_val(), 2);
+  EXPECT_EQ(xla_shape.expressions(1)->get_val(), 3);
+}
+
+TEST_F(XlaCompilerTest, ShapeAfterReshapeCompilesWithoutTrackedExpressions) {
+  MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
+  struct FlagRestore {
+    MarkForCompilationPassFlags* flags;
+    bool dynamic_sizes;
+    bool single_dynamic_dim;
+    ~FlagRestore() {
+      flags->tf_xla_enable_dynamic_sizes = dynamic_sizes;
+      flags->tf_xla_cluster_single_dynamic_dim = single_dynamic_dim;
+    }
+  } restore{flags, flags->tf_xla_enable_dynamic_sizes,
+            flags->tf_xla_cluster_single_dynamic_dim};
+  flags->tf_xla_enable_dynamic_sizes = false;
+  flags->tf_xla_cluster_single_dynamic_dim = false;
+
+  Scope scope = Scope::NewRootScope().ExitOnError();
+  auto a = ops::_Arg(scope.WithOpName("A"), DT_INT32, 0);
+  auto shape = ops::Const(scope.WithOpName("ShapeConst"),
+                          std::vector<int32>({1, 2}));
+  auto reshaped = ops::Reshape(scope.WithOpName("Reshape"), a, shape);
+  auto result = ops::Shape(scope.WithOpName("Shape"), reshaped,
+                           ops::Shape::OutType(DT_INT32));
+  auto retval = ops::_Retval(scope.WithOpName("Retval"), result, 0);
+  std::unique_ptr<Graph> graph(new Graph(OpRegistry::Global()));
+  TF_ASSERT_OK(scope.ToGraph(graph.get()));
+
+  std::vector<XlaCompiler::Argument> args(1);
+  args[0].kind = XlaCompiler::Argument::kParameter;
+  args[0].type = DT_INT32;
+  args[0].shape = TensorShape({2});
+
+  XlaCompiler compiler(DefaultOptions());
+  XlaCompiler::CompilationResult compilation_result;
+  absl::Status status =
+      compiler.CompileGraph(XlaCompiler::CompileOptions(), "shape_after_reshape",
+                            std::move(graph), args, &compilation_result);
+
+  TF_ASSERT_OK(status);
+  (void)retval;
 }
 
 // Tests handling of compile-time constant outputs.
