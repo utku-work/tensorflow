@@ -720,6 +720,7 @@ cc_library(
         "//tensorflow/core/platform:macros",
         "//tensorflow/core/platform:status",
         "//tensorflow/core/platform:statusor",
+        "//tensorflow/core/util:env_var",
         "//tensorflow/core/util:overflow",
         "@eigen_archive//:eigen3",
         "@local_xla//xla:shape_util",
