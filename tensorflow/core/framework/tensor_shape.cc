@@ -1199,8 +1199,6 @@ absl::Status PartialTensorShape::MergeWith(const PartialTensorShape& shape,
 
   result->Clear();
   absl::Status s = absl::OkStatus();
-  std::vector<xla::DynExpr*> merged_exprs;
-  merged_exprs.reserve(dims_);
   for (int i = 0; i < dims_; ++i) {
     const int64_t dim0 = dim_size(i);
     const int64_t dim1 = shape.dim_size(i);
@@ -1213,20 +1211,8 @@ absl::Status PartialTensorShape::MergeWith(const PartialTensorShape& shape,
     if (!s.ok()) {
       return s;
     }
-
-    xla::DynExpr* expr0 = get_expression(i);
-    xla::DynExpr* expr1 = shape.get_expression(i);
-    const bool expr0_dynamic = expr0 != nullptr && expr0->is_dynamic();
-    const bool expr1_dynamic = expr1 != nullptr && expr1->is_dynamic();
-    if (expr0_dynamic) {
-      merged_exprs.push_back(expr0);
-    } else if (expr1_dynamic) {
-      merged_exprs.push_back(expr1);
-    } else {
-      merged_exprs.push_back(xla::DynExpr::_(dim0 >= 0 ? dim0 : dim1));
-    }
   }
-  result->set_expressions(merged_exprs);
+  result->set_expressions(shape.get_expressions());
   return absl::OkStatus();
 }
 
