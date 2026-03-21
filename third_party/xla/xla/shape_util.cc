@@ -756,6 +756,12 @@ Shape ShapeUtil::PrependMajorDimension(int64_t bound, Shape shape) {
       } else {
         printer->Append("?");
       }
+      DynExpr* expr = shape.expressions(i);
+      if (expr != nullptr && expr->is_dynamic()) {
+        printer->Append("<");
+        expr->print(printer);
+        printer->Append(">");
+      }
     } else {
       // Only print constant expression if it is different than the dimension
       // (i.e. it is wrong!)
