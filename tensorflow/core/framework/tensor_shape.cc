@@ -36,8 +36,6 @@ const bool kTensorShapeExpressionsEnabled = [] {
 }();
 }
 
-}
-
 xla::DynExpr* ExprFromProto(const ExpressionProto& proto) {
   switch (proto.node_type_case()) {
     case ExpressionProto::kConstantValue:
@@ -497,26 +495,6 @@ void TensorShapeRep::Clear() {
 }
 
 void TensorShapeRep::set_expression(int d, xla::DynExpr* expr) {
-  if (!kTensorShapeExpressionsEnabled) {
-    expressions_.clear();
-    return;
-  }
-  if (expressions_.size() < ndims_byte()) {
-    expressions_.reserve(ndims_byte());
-    for (int i = expressions_.size(); i < ndims_byte(); ++i) {
-      int64_t dim = -1;
-      if (tag() == REP16) {
-        uint16 raw_dim = as16()->dims_[i];
-        dim = raw_dim == kUnknownRep16 ? -1 : raw_dim;
-      } else if (tag() == REP32) {
-        uint32 raw_dim = as32()->dims_[i];
-        dim = raw_dim == kUnknownRep32 ? -1 : raw_dim;
-      } else {
-        dim = (*as64()->dims_)[i];
-      }
-      expressions_.push_back(xla::DynExpr::_(dim));
-    }
-  }
   expressions_[d] = expr;
 }
 
@@ -529,10 +507,6 @@ void TensorShapeRep::AddExpression(xla::DynExpr* expr) {
 }
 
 void TensorShapeRep::set_expressions(std::vector<xla::DynExpr*> exprs) {
-  if (!kTensorShapeExpressionsEnabled) {
-    expressions_.clear();
-    return;
-  }
   expressions_ = exprs;
 }
 
