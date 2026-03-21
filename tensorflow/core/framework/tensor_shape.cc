@@ -697,9 +697,6 @@ absl::Status TensorShapeBase<Shape>::AppendShapeWithStatus(
       return s;
     }
   }
-  for (auto e : shape.get_expressions()) {
-    AddExpression(e);
-  }
   return s;
 }
 
@@ -711,17 +708,11 @@ void TensorShapeBase<Shape>::InsertDim(int d, int64_t size) {
   CHECK_LT(dims(), MaxDimensions());
   absl::InlinedVector<int64_t, 8UL> vals;
   AppendTo(*this, &vals);
-  std::vector<xla::DynExpr*> exprs = get_expressions();
   vals.insert(vals.begin() + d, size);
   ClearAllButDataType();
   for (auto dval : vals) {
     AddDim(dval);
   }
-  exprs.insert(exprs.begin() + d, xla::DynExpr::_(size));
-  if (exprs.size() > vals.size()) {
-    exprs.resize(vals.size());
-  }
-  set_expressions(exprs);
 }
 
 template <class Shape>
@@ -748,7 +739,6 @@ absl::Status TensorShapeBase<Shape>::InsertDimWithStatus(int d, int64_t size) {
 
   absl::InlinedVector<int64_t, 8UL> vals;
   AppendTo(*this, &vals);
-  std::vector<xla::DynExpr*> exprs = get_expressions();
   vals.insert(vals.begin() + d, size);
   ClearAllButDataType();
 
@@ -759,11 +749,6 @@ absl::Status TensorShapeBase<Shape>::InsertDimWithStatus(int d, int64_t size) {
       return s;
     }
   }
-  exprs.insert(exprs.begin() + d, xla::DynExpr::_(size));
-  if (exprs.size() > vals.size()) {
-    exprs.resize(vals.size());
-  }
-  set_expressions(exprs);
   return s;
 }
 
@@ -795,17 +780,12 @@ void TensorShapeBase<Shape>::set_dim(int d, int64_t size) {
   } else {
     // Must upgrade
     absl::InlinedVector<int64_t, 8UL> vals;
-    std::vector<xla::DynExpr*> exprs = get_expressions();
     AppendTo(*this, &vals);
     vals[d] = size;
-    if (d < exprs.size()) {
-      exprs[d] = xla::DynExpr::_(size);
-    }
     ClearAllButDataType();
     for (auto dval : vals) {
       AddDim(dval);
     }
-    set_expressions(exprs);
   }
   TF_CHECK_OK(RecomputeNumElements());
 }
@@ -834,7 +814,6 @@ absl::Status TensorShapeBase<Shape>::SetDimWithStatus(int d, int64_t size) {
   } else {
     // Must upgrade
     absl::InlinedVector<int64_t, 8UL> vals;
-    std::vector<xla::DynExpr*> exprs = get_expressions();
     AppendTo(*this, &vals);
     vals[d] = size;
     ClearAllButDataType();
@@ -846,10 +825,6 @@ absl::Status TensorShapeBase<Shape>::SetDimWithStatus(int d, int64_t size) {
         return s;
       }
     }
-    if (d < exprs.size()) {
-      exprs[d] = xla::DynExpr::_(size);
-    }
-    set_expressions(exprs);
   }
 
   if (get_expressions().size() > d) set_expression(d, xla::DynExpr::_(size));
@@ -1161,7 +1136,7 @@ PartialTensorShape PartialTensorShape::Concatenate(
     return PartialTensorShape();
   }
   PartialTensorShape out = *this;
-  out.AppendShape(shape);
+  for (auto dim : shape) out.AddDim(dim.size);
   return out;
 }
 
@@ -1172,7 +1147,12 @@ absl::Status PartialTensorShape::ConcatenateWithStatus(
     return absl::OkStatus();
   }
   *out = *this;
-  return out->AppendShapeWithStatus(shape);
+  for (auto dim : shape) {
+    absl::Status s = out->AddDimWithStatus(dim.size);
+    if (!s.ok()) return s;
+  }
+
+  return absl::OkStatus();
 }
 
 absl::Status PartialTensorShape::MergeWith(const PartialTensorShape& shape,
