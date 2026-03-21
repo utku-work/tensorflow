@@ -48,7 +48,7 @@ bool EnvFlagContains(absl::string_view flags, absl::string_view name) {
 const bool kTensorShapeExpressionsEnabled = [] {
   string tf_xla_flags;
   TF_CHECK_OK(ReadStringFromEnvVar("TF_XLA_FLAGS", "", &tf_xla_flags));
-  return EnvFlagContains(tf_xla_flags, "--tf_xla_enable_dynamic_sizes");
+  return EnvFlagContains(tf_xla_flags, "--tf_xla_enable_dynamic_sizes=true");
 }();
 
 }  // namespace
