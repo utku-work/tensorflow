@@ -261,11 +261,11 @@ TensorShapeBase<Shape>::TensorShapeBase(const TensorShapeProto& proto) {
     for (const auto& d : proto.dim()) {
       AddDim(d.size());
     }
-    if (kTensorShapeExpressionsEnabled) {
+    // if (kTensorShapeExpressionsEnabled) {
       for (const auto& e : proto.expressions()) {
         AddExpression(ExprFromProto(e));
       }
-    }
+    // }
   }
 }
 
