@@ -305,11 +305,11 @@ absl::Status TensorShapeBase<Shape>::BuildTensorShapeBase(
         }
       }
     }
-    if (kTensorShapeExpressionsEnabled) {
+    // if (kTensorShapeExpressionsEnabled) {
       for (const auto& e : proto.expressions()) {
         out->AddExpression(ExprFromProto(e));
       }
-    }
+    // }
   }
   return absl::OkStatus();
 }
@@ -499,9 +499,9 @@ void TensorShapeRep::set_expression(int d, xla::DynExpr* expr) {
 }
 
 void TensorShapeRep::AddExpression(xla::DynExpr* expr) {
-  if (!kTensorShapeExpressionsEnabled) {
-     return;
-  }
+  // if (!kTensorShapeExpressionsEnabled) {
+  //    return;
+  // }
   CHECK_LT(expressions_.size(), ndims_byte());
   expressions_.push_back(expr);
 }
