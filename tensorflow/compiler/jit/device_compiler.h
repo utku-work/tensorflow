@@ -233,6 +233,7 @@ DeviceCompiler<ExecutableType, ClientType>::DeviceCompiler(
 
   MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
   if (flags->tf_xla_enable_dynamic_sizes) {
+    LOG(INFO) << "device_compiler\n";
     xla_batch_matcher_ = std::make_unique<XlaBatchMatcher>();
   }
 }

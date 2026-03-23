@@ -136,6 +136,7 @@ absl::StatusOr<xla::XlaOp> ReshapeWithCorrectRepresentationAndSharding(
     for (int64_t i = 0; i < original_shape.dimensions().size(); ++i) {
       to_shape.set_dynamic_dimension(i, original_shape.is_dynamic_dimension(i));
       if (flags->tf_xla_enable_dynamic_sizes) {
+        LOG(INFO) << "Layout Util.\n";
         to_shape.set_expression(i, original_shape.expressions(i));
       }
     }

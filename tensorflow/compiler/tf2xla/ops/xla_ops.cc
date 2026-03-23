@@ -1151,6 +1151,7 @@ xla::Shape GetShape(shape_inference::ShapeHandle shape_handle,
     int dynamic_multiplier = c->DynamicRatio(c->Dim(shape_handle, i));
     dynamic_dims.push_back(is_dynamic);
     if (flags->tf_xla_enable_dynamic_sizes) {
+      LOG(INFO) <<"XLA OPs. tf2xla\n";
       expressions.push_back(dynamic_multiplier * *xla::DynExpr::V(1));
     }
     dims.push_back(is_dynamic ? xla::Shape::kUnboundedSize
@@ -1162,6 +1163,7 @@ xla::Shape GetShape(shape_inference::ShapeHandle shape_handle,
       absl::InlinedVector<bool, 4>(dynamic_dims.begin(), dynamic_dims.end()));
 
   if (flags->tf_xla_enable_dynamic_sizes) {
+    LOG(INFO) <<"XLA OPs. tf2xla\n";
     sh.set_expressions(expressions);
   }
   return sh;

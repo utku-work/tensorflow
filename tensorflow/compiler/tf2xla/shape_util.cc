@@ -103,6 +103,7 @@ absl::Status XLAShapeToTensorShape(const xla::Shape& shape,
   }
   MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
   if (flags->tf_xla_enable_dynamic_sizes) {
+        LOG(INFO) << "Shape Util.\n";
     std::vector<xla::DynExpr*> bexprs(shape.expressions().begin(),
                                       shape.expressions().end());
     tensor_shape->set_expressions(bexprs);
@@ -178,6 +179,7 @@ xla::Shape TensorShapeToXLAShape(xla::PrimitiveType type,
   MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
   std::vector<xla::DynExpr*> expressions;
   if (flags->tf_xla_enable_dynamic_sizes) {
+      LOG(INFO) << "Shape Util.\n";
     expressions.resize(rank);
   }
   for (int d = 0; d < rank; ++d) {
@@ -188,6 +190,7 @@ xla::Shape TensorShapeToXLAShape(xla::PrimitiveType type,
       return xla::ShapeUtil::MakeShapeWithDenseLayout(type, {0}, {0});
     }
     if (flags->tf_xla_enable_dynamic_sizes) {
+      LOG(INFO) << "Shape Util.\n";
       expressions[d] = tensor_shape.get_expression(d);
     }
   }

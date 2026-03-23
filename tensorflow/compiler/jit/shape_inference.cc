@@ -53,11 +53,13 @@ absl::Status ShapeHandleToTensorShape(
   MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
   std::vector<xla::DynExpr*> dyn_exprs;
   if (flags->tf_xla_enable_dynamic_sizes) {
+    LOG(INFO) << "Shape Inference\n";
     dyn_exprs.resize(context->Rank(handle));
   }
   for (int32_t i = 0, end = dims.size(); i < end; ++i) {
     dims[i] = context->Value(context->Dim(handle, i));
     if (flags->tf_xla_enable_dynamic_sizes) {
+      LOG(INFO) << "Shape Inference\n";
       auto ratio = context->DynamicRatio(context->Dim(handle, i));
       dyn_exprs[i] = ratio > 0 ? (ratio * *xla::DynExpr::V(1))->s()
                                : xla::DynExpr::_(dims[i]);
@@ -66,6 +68,7 @@ absl::Status ShapeHandleToTensorShape(
   auto status =
       PartialTensorShape::MakePartialShape(dims.data(), dims.size(), shape);
   if (flags->tf_xla_enable_dynamic_sizes) {
+      LOG(INFO) << "Shape Inference\n";
     shape->set_expressions(dyn_exprs);
   }
   return status;

@@ -498,6 +498,7 @@ absl::Status CompileToLocalExecutable(
 
   MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
   if (flags->tf_xla_enable_dynamic_sizes) {
+    LOG(INFO) << "XLA_ops\n";
     // Rewriting the argument with expressions if they have dynamic
     // dimension, detecting dynamic dimension via either _dynamic_dim or the
     // inferred-output-shapes attr attached during encapsulation.
@@ -1226,6 +1227,7 @@ void XlaRunOp::Compute(OpKernelContext* ctx) {
 
   MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
   if (flags->tf_xla_enable_dynamic_sizes) {
+    LOG(INFO) << "XLA_ops\n";
     bool is_set = false;
     std::set<int64_t> dyn_vals;
     const auto* comp_result = closure.compilation_result();
