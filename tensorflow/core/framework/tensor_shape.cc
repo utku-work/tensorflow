@@ -15,41 +15,21 @@ limitations under the License.
 
 #include "tensorflow/core/framework/tensor_shape.h"
 
-#include "absl/strings/ascii.h"
 #include "tensorflow/core/framework/bounds_check.h"
+#include "tensorflow/core/framework/tensor_shape_expr.h"
 #include "tensorflow/core/framework/tensor_shape.pb.h"
 #include "tensorflow/core/lib/strings/str_util.h"
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/macros.h"
-#include "tensorflow/core/util/env_var.h"
 #include "tensorflow/core/util/overflow.h"
 
 namespace tensorflow {
 
 namespace {
 
-bool EnvFlagContains(absl::string_view flags, absl::string_view name) {
-  size_t pos = 0;
-  while ((pos = flags.find(name, pos)) != absl::string_view::npos) {
-    const bool start_ok = pos == 0 || absl::ascii_isspace(flags[pos - 1]);
-    const size_t end = pos + name.size();
-    const bool end_ok = end == flags.size() || absl::ascii_isspace(flags[end]) ||
-                        flags[end] == '=';
-    if (start_ok && end_ok) {
-      return true;
-    }
-    pos = end;
-  }
-  return false;
-}
-
-const bool kTensorShapeExpressionsEnabled = [] {
-  string tf_xla_flags;
-  TF_CHECK_OK(ReadStringFromEnvVar("TF_XLA_FLAGS", "", &tf_xla_flags));
-  return EnvFlagContains(tf_xla_flags, "--tf_xla_enable_dynamic_sizes=true");
-}();
+const bool kTensorShapeExpressionsEnabled = TensorShapeExpressionsEnabled();
 
 }  // namespace
 
