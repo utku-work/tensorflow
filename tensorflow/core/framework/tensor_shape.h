@@ -17,6 +17,7 @@ limitations under the License.
 #define TENSORFLOW_CORE_FRAMEWORK_TENSOR_SHAPE_H_
 
 #include <string>
+#include <vector>
 
 #include "unsupported/Eigen/CXX11/Tensor"  // from @eigen_archive
 #include "tensorflow/core/framework/types.pb.h"
@@ -83,7 +84,29 @@ class TensorShapeRep {
 
   // Get the array of dynamic multipliers.
   std::vector<xla::DynExpr*> get_expressions() const {
-    return expressions_;
+    if (ndims_byte() == kUnknownRank) {
+      return {};
+    }
+    std::vector<xla::DynExpr*> exprs(ndims_byte());
+    for (int i = 0; i < ndims_byte(); ++i) {
+      if (i < expressions_.size() && expressions_[i] != nullptr) {
+        exprs[i] = expressions_[i];
+        continue;
+      }
+
+      int64_t dim = -1;
+      if (tag() == REP16) {
+        uint16 raw_dim = as16()->dims_[i];
+        dim = raw_dim == kUnknownRep16 ? -1 : raw_dim;
+      } else if (tag() == REP32) {
+        uint32 raw_dim = as32()->dims_[i];
+        dim = raw_dim == kUnknownRep32 ? -1 : raw_dim;
+      } else {
+        dim = (*as64()->dims_)[i];
+      }
+      exprs[i] = xla::DynExpr::_(dim);
+    }
+    return exprs;
   }
 
   // Return the multiplier for a specific dynamic dimension.
@@ -91,11 +114,25 @@ class TensorShapeRep {
   xla::DynExpr* get_expression(int64_t dimension) const {
     if (dimension < 0) return xla::DynExpr::_(-999);
     const size_t dim = static_cast<size_t>(dimension);
-    if (dim >= expressions_.size()) {
+    if (dim < expressions_.size() && expressions_[dim] != nullptr) {
+      return expressions_[dim];
+    }
+
+    if (ndims_byte() == kUnknownRank || dim >= ndims_byte()) {
       return xla::DynExpr::_(-999);
     }
-    return expressions_[dim] != nullptr ? expressions_[dim]
-                                        : xla::DynExpr::_(-999);
+
+    int64_t dim_value = -1;
+    if (tag() == REP16) {
+      uint16 raw_dim = as16()->dims_[dim];
+      dim_value = raw_dim == kUnknownRep16 ? -1 : raw_dim;
+    } else if (tag() == REP32) {
+      uint32 raw_dim = as32()->dims_[dim];
+      dim_value = raw_dim == kUnknownRep32 ? -1 : raw_dim;
+    } else {
+      dim_value = (*as64()->dims_)[dim];
+    }
+    return xla::DynExpr::_(dim_value);
   }
 
  protected:
