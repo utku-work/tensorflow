@@ -496,21 +496,8 @@ void TensorShapeRep::set_expression(int d, xla::DynExpr* expr) {
     expressions_.clear();
     return;
   }
-  if (expressions_.size() < ndims_byte()) {
-    expressions_.reserve(ndims_byte());
-    for (int i = expressions_.size(); i < ndims_byte(); ++i) {
-      int64_t dim = -1;
-      if (tag() == REP16) {
-        uint16 raw_dim = as16()->dims_[i];
-        dim = raw_dim == kUnknownRep16 ? -1 : raw_dim;
-      } else if (tag() == REP32) {
-        uint32 raw_dim = as32()->dims_[i];
-        dim = raw_dim == kUnknownRep32 ? -1 : raw_dim;
-      } else {
-        dim = (*as64()->dims_)[i];
-      }
-      expressions_.push_back(xla::DynExpr::_(dim));
-    }
+  if (expressions_.size() <= static_cast<size_t>(d)) {
+    expressions_.resize(d + 1, nullptr);
   }
   expressions_[d] = expr;
 }
@@ -527,6 +514,9 @@ void TensorShapeRep::set_expressions(std::vector<xla::DynExpr*> exprs) {
   if (!kTensorShapeExpressionsEnabled) {
     expressions_.clear();
     return;
+  }
+  while (!exprs.empty() && exprs.back() == nullptr) {
+    exprs.pop_back();
   }
   expressions_ = exprs;
 }
@@ -745,7 +735,9 @@ template <class Shape>
 void TensorShapeBase<Shape>::set_dim(int d, int64_t size) {
   CHECK_GE(d, 0);
   CHECK_LT(d, dims());
-  if (get_expressions().size() > d) set_expression(d, xla::DynExpr::_(size));
+  if (d < expressions_.size() && expressions_[d] != nullptr) {
+    set_expression(d, xla::DynExpr::_(size));
+  }
   if (!kIsPartial) {
     CHECK_GE(size, 0);
   }
@@ -807,7 +799,9 @@ absl::Status TensorShapeBase<Shape>::SetDimWithStatus(int d, int64_t size) {
     }
   }
 
-  if (get_expressions().size() > d) set_expression(d, xla::DynExpr::_(size));
+  if (d < expressions_.size() && expressions_[d] != nullptr) {
+    set_expression(d, xla::DynExpr::_(size));
+  }
   return RecomputeNumElements();
 }
 
@@ -932,9 +926,11 @@ void TensorShapeBase<Shape>::AsProto(TensorShapeProto* proto) const {
       proto->add_dim()->set_size(dim_size(i));
     }
     if (kTensorShapeExpressionsEnabled) {
-      for (int i = 0; i < get_expressions().size(); i++) {
+      for (int i = 0; i < expressions_.size(); ++i) {
         ExpressionProto* eproto = proto->add_expressions();
-        ExprToProto(get_expression(i), eproto);
+        if (expressions_[i] != nullptr) {
+          ExprToProto(expressions_[i], eproto);
+        }
       }
     }
   }
@@ -970,9 +966,10 @@ string TensorShapeRep::DebugString() const {
     } else {
       strings::StrAppend(&s, dim);
     }
-    if (kTensorShapeExpressionsEnabled && shape.get_expression(i) != nullptr) {
+    if (kTensorShapeExpressionsEnabled && i < expressions_.size() &&
+        expressions_[i] != nullptr) {
       strings::StrAppend(&s, "<");
-      strings::StrAppend(&s, ExprToString(shape.get_expression(i)));
+      strings::StrAppend(&s, ExprToString(expressions_[i]));
       strings::StrAppend(&s, ">");
     }
   }

@@ -188,7 +188,7 @@ xla::Shape TensorShapeToXLAShape(xla::PrimitiveType type,
       return xla::ShapeUtil::MakeShapeWithDenseLayout(type, {0}, {0});
     }
     if (flags->tf_xla_enable_dynamic_sizes) {
-      expressions[d] = tensor_shape.get_expression(d);
+      expressions[d] = tensor_shape.get_filled_expression(d);
     }
   }
   // XLA uses minor-to-major; Tensorflow uses major-to-minor.
@@ -228,16 +228,11 @@ xla::Shape TensorShapeToXLAShape(xla::PrimitiveType type,
   MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
   std::vector<xla::DynExpr*> expressions;
   if (flags->tf_xla_enable_dynamic_sizes) {
-    expressions.resize(rank);
+    expressions = tensor_shape.get_filled_expressions();
   }
 
   for (int d = 0; d < rank; ++d) {
     dimensions[d] = tensor_shape.dim_size(d);
-    if (flags->tf_xla_enable_dynamic_sizes) {
-      expressions[d] = (d < tensor_shape.get_expressions().size())
-                           ? tensor_shape.get_expression(d)
-                           : xla::DynExpr::_(dimensions[d]);
-    }
   }
 
   // XLA uses minor-to-major; Tensorflow uses major-to-minor.

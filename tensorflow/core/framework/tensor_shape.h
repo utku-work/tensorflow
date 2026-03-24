@@ -84,27 +84,18 @@ class TensorShapeRep {
 
   // Get the array of dynamic multipliers.
   std::vector<xla::DynExpr*> get_expressions() const {
+    return expressions_;
+  }
+
+  // Get the array of dynamic multipliers, filling missing entries with
+  // constant expressions derived from the concrete dimensions.
+  std::vector<xla::DynExpr*> get_filled_expressions() const {
     if (ndims_byte() == kUnknownRank) {
       return {};
     }
     std::vector<xla::DynExpr*> exprs(ndims_byte());
     for (int i = 0; i < ndims_byte(); ++i) {
-      if (i < expressions_.size() && expressions_[i] != nullptr) {
-        exprs[i] = expressions_[i];
-        continue;
-      }
-
-      int64_t dim = -1;
-      if (tag() == REP16) {
-        uint16 raw_dim = as16()->dims_[i];
-        dim = raw_dim == kUnknownRep16 ? -1 : raw_dim;
-      } else if (tag() == REP32) {
-        uint32 raw_dim = as32()->dims_[i];
-        dim = raw_dim == kUnknownRep32 ? -1 : raw_dim;
-      } else {
-        dim = (*as64()->dims_)[i];
-      }
-      exprs[i] = xla::DynExpr::_(dim);
+      exprs[i] = get_filled_expression(i);
     }
     return exprs;
   }
@@ -112,27 +103,28 @@ class TensorShapeRep {
   // Return the multiplier for a specific dynamic dimension.
   // -1 if the dimension is not dynamic.
   xla::DynExpr* get_expression(int64_t dimension) const {
-    if (dimension < 0) return xla::DynExpr::_(-999);
+    if (dimension < 0) return missing_expression();
+    const size_t dim = static_cast<size_t>(dimension);
+    if (dim >= expressions_.size()) {
+      return missing_expression();
+    }
+    return expressions_[dim] != nullptr ? expressions_[dim]
+                                        : missing_expression();
+  }
+
+  // Return the multiplier for a specific dynamic dimension, materializing a
+  // constant expression for concrete dimensions without a stored expression.
+  xla::DynExpr* get_filled_expression(int64_t dimension) const {
+    if (dimension < 0) return missing_expression();
     const size_t dim = static_cast<size_t>(dimension);
     if (dim < expressions_.size() && expressions_[dim] != nullptr) {
       return expressions_[dim];
     }
 
     if (ndims_byte() == kUnknownRank || dim >= ndims_byte()) {
-      return xla::DynExpr::_(-999);
+      return missing_expression();
     }
-
-    int64_t dim_value = -1;
-    if (tag() == REP16) {
-      uint16 raw_dim = as16()->dims_[dim];
-      dim_value = raw_dim == kUnknownRep16 ? -1 : raw_dim;
-    } else if (tag() == REP32) {
-      uint32 raw_dim = as32()->dims_[dim];
-      dim_value = raw_dim == kUnknownRep32 ? -1 : raw_dim;
-    } else {
-      dim_value = (*as64()->dims_)[dim];
-    }
-    return xla::DynExpr::_(dim_value);
+    return constant_expression_for_dim(dim);
   }
 
  protected:
@@ -207,6 +199,25 @@ class TensorShapeRep {
   void set_num_elements(int64_t n) { num_elements_ = n; }
 
  private:
+  static xla::DynExpr* missing_expression() {
+    static xla::DynExpr* const missing = xla::DynExpr::_(-999);
+    return missing;
+  }
+
+  xla::DynExpr* constant_expression_for_dim(size_t dim) const {
+    int64_t dim_value = -1;
+    if (tag() == REP16) {
+      uint16 raw_dim = as16()->dims_[dim];
+      dim_value = raw_dim == kUnknownRep16 ? -1 : raw_dim;
+    } else if (tag() == REP32) {
+      uint32 raw_dim = as32()->dims_[dim];
+      dim_value = raw_dim == kUnknownRep32 ? -1 : raw_dim;
+    } else {
+      dim_value = (*as64()->dims_)[dim];
+    }
+    return xla::DynExpr::_(dim_value);
+  }
+
   void DestructorOutOfLine();
   void SlowCopyFrom(const TensorShapeRep& b);
 
