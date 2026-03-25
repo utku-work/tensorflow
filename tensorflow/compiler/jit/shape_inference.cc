@@ -53,6 +53,7 @@ absl::Status ShapeHandleToTensorShape(
   MarkForCompilationPassFlags* flags = GetMarkForCompilationPassFlags();
   std::vector<xla::DynExpr*> dyn_exprs;
   if (flags->tf_xla_enable_dynamic_sizes) {
+    LOG(INFO) << "[US] Enabling dynamic size support for shape inference.\n";
     dyn_exprs.resize(context->Rank(handle));
   }
   for (int32_t i = 0, end = dims.size(); i < end; ++i) {
@@ -66,6 +67,7 @@ absl::Status ShapeHandleToTensorShape(
   auto status =
       PartialTensorShape::MakePartialShape(dims.data(), dims.size(), shape);
   if (flags->tf_xla_enable_dynamic_sizes) {
+    LOG(INFO) << "[US] Enabling dynamic size support for shape inference.\n";
     shape->set_expressions(dyn_exprs);
   }
   return status;

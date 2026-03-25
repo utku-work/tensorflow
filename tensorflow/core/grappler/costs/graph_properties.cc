@@ -1989,6 +1989,7 @@ class SymbolicShapeRefiner {
   }
 
   absl::Status CanonicalizeOutputDims(const NodeDef* node) {
+    LOG(INFO) << "[US] Canonicalizing output dims for node: " << node->name() << "\n";
     NodeContext* ctx = GetNodeContext(node);
     if (!ctx) return absl::OkStatus();
 
