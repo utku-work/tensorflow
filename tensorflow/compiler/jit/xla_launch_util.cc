@@ -604,7 +604,7 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
   std::vector<XlaCompiler::Argument> out;
   const int64_t prepare_output_vector_start_time =
       record_phase_timings ? env->NowMicros() : 0;
-  out.resize(inputs.size());
+  out.reserve(inputs.size());
   if (record_phase_timings) {
     prepare_output_vector_time_us =
         env->NowMicros() - prepare_output_vector_start_time;
@@ -619,7 +619,8 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
       const int64_t branch_start_time =
           record_phase_timings ? env->NowMicros() : 0;
 
-      XlaCompiler::Argument& arg = out[input_num];
+      out.emplace_back();
+      XlaCompiler::Argument& arg = out.back();
       if (is_constant) {
         arg.kind = XlaCompiler::Argument::kConstant;
         arg.type = input->dtype();
@@ -710,7 +711,8 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
     const int64_t branch_start_time =
         record_phase_timings ? env->NowMicros() : 0;
 
-    XlaCompiler::Argument& arg = out[input_num];
+    out.emplace_back();
+    XlaCompiler::Argument& arg = out.back();
     auto variable_it = variable_info_lookup.find(input_num);
     if (variable_it != variable_info_lookup.end() && device != nullptr) {
       // Handles resource variables.
