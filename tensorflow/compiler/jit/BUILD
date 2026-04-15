@@ -620,6 +620,7 @@ cc_library(
         "//tensorflow/core/tfrt/gpu/kernel:__pkg__",
     ],
     deps = [
+        ":device_compilation_profiler",
         ":pjrt_tensor_buffer",
         ":pjrt_tensor_buffer_util",
         ":variable_info",
@@ -636,6 +637,7 @@ cc_library(
         "//tensorflow/core/common_runtime:dma_helper",
         "//tensorflow/core/common_runtime:gpu_device_context",
         "//tensorflow/core/common_runtime/gpu:gpu_serving_device_selector",
+        "//tensorflow/core/platform:env",
         "//tensorflow/core/tfrt/common:async_value_tensor",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/cleanup",
