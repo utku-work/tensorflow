@@ -743,8 +743,24 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
       }
       arg.type = input->dtype();
       arg.shape = input->shape();
+      if (record_phase_timings) {
+        parameter_inputs_time_us += env->NowMicros() - branch_start_time;
+      }
     }
   }
+
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup,
+      setup_end_time - build_start_time);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputs,
+      constant_inputs_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputs,
+      parameter_inputs_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsResourceInputs,
+      resource_inputs_time_us);
 
   return out;
 }
@@ -774,10 +790,6 @@ absl::Status PreparePjRtExecutableArguments(
     //
     // 2. Old fashion Tensor with raw device memory pointer. This case occurs
     // when the producer is a non-XLA TF GPU kernel or function (e.g.
-      if (record_phase_timings) {
-        parameter_inputs_time_us += env->NowMicros() - branch_start_time;
-      }
-    //
     // 3. AsyncValueTensor, containing a PjRtBuffer. This is the legacy mode
     // and certain device type (e.g. TPU) still uses this path.
     AsyncValueTensor* av_tensor = AsyncValueTensor::FromTensor(tensor);
@@ -1013,22 +1025,8 @@ absl::Status RunPjRtExecutable(
     core::ScopedUnref device_selector_resource_ref(device_selector_resource);
 
     TF_ASSIGN_OR_RETURN(absl::string_view fingerprint,
-      parameter_inputs_time_us += env->NowMicros() - branch_start_time;
-                        executable->FingerprintExecutable());
+              executable->FingerprintExecutable());
     device_selector_resource->selector()->Enqueue(pjrt_device_id, fingerprint);
-
-  register_phase_timing(
-      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup,
-      setup_end_time - build_start_time);
-  register_phase_timing(
-      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputs,
-      constant_inputs_time_us);
-  register_phase_timing(
-      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputs,
-      parameter_inputs_time_us);
-  register_phase_timing(
-      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsResourceInputs,
-      resource_inputs_time_us);
   }
   TF_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<xla::PjRtBuffer>> execute_outputs,
