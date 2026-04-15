@@ -130,14 +130,12 @@ TEST(DeviceCompilationProfilerTest, RegisterPhaseTiming) {
 }
 
 TEST(DeviceCompilationProfilerTest, DumpCsv) {
-  // DumpCsv should write the aggregated per-cluster metrics in CSV form.
+  // DumpCsv should write one row per recorded phase sample.
   DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();
   core::ScopedUnref profiler_ref(profiler);
 
   NameAttrList function;
   function.set_name("TestFunc");
-  profiler->RegisterExecution(function);
-  TF_ASSERT_OK(profiler->RegisterCompilation(function, 4, false));
   profiler->RegisterPhaseTiming(
       function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 7);
   profiler->RegisterPhaseTiming(
@@ -151,8 +149,10 @@ TEST(DeviceCompilationProfilerTest, DumpCsv) {
 
   std::string contents;
   TF_ASSERT_OK(ReadFileToString(env, filename, &contents));
-  EXPECT_NE(contents.find("cluster_name,compile_count"), std::string::npos);
-  EXPECT_NE(contents.find("\"TestFunc\",1,1,4,false,1,7,1,5"),
+  EXPECT_NE(contents.find("cluster_name,phase,event_index"),
+            std::string::npos);
+  EXPECT_NE(contents.find(
+                "\"TestFunc\",signature_build,1,1,7\n\"TestFunc\",cache_lookup,2,1,5"),
             std::string::npos);
 }
 
@@ -178,13 +178,13 @@ TEST(DeviceCompilationProfilerTest, DumpsCsvOnDestructionWhenEnvVarIsSet) {
 
   std::string contents;
   TF_ASSERT_OK(ReadFileToString(env, filename, &contents));
-  EXPECT_NE(contents.find("\"TestFunc\",0,0,0,false,0,0,0,0,0,0,0,0,0,1,11"),
+  EXPECT_NE(contents.find("\"TestFunc\",xla_compile_op_compute,1,1,11"),
             std::string::npos);
   ASSERT_EQ(::unsetenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH"), 0);
 }
 
 TEST(DeviceCompilationProfilerTest, UpdatesCsvWhenPhaseTimingIsRecorded) {
-  // Writing on each phase sample makes the CSV visible in long-lived servers.
+  // Writing on each phase sample should keep later requests visible too.
   Env* env = Env::Default();
   std::string filename;
   ASSERT_TRUE(env->LocalTempFilename(&filename));
@@ -199,10 +199,14 @@ TEST(DeviceCompilationProfilerTest, UpdatesCsvWhenPhaseTimingIsRecorded) {
   function.set_name("TestFunc");
   profiler->RegisterPhaseTiming(
       function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 9);
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 4);
 
   std::string contents;
   TF_ASSERT_OK(ReadFileToString(env, filename, &contents));
-  EXPECT_NE(contents.find("\"TestFunc\",0,0,0,false,1,9"),
+  EXPECT_NE(contents.find("\"TestFunc\",signature_build,1,1,9"),
+            std::string::npos);
+  EXPECT_NE(contents.find("\"TestFunc\",signature_build,2,2,4"),
             std::string::npos);
 
   ASSERT_EQ(::unsetenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH"), 0);

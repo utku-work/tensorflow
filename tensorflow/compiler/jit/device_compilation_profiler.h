@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "tensorflow/compiler/jit/xla_compile_util.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
@@ -50,6 +51,13 @@ class DeviceCompilationProfiler : public ResourceBase {
     }
   };
 
+  struct PhaseTimingRecord {
+    CompilePhase phase;
+    int64_t event_index = 0;
+    int64_t phase_sample_index = 0;
+    int64_t elapsed_time_us = 0;
+  };
+
   struct ClusterCompileStats {
     // Number of times the cluster has been (re-)compiled.
     int64_t compile_count = 0;
@@ -72,6 +80,7 @@ class DeviceCompilationProfiler : public ResourceBase {
     PhaseTimingStats get_xla_compiler_args_and_snapshot_variables;
     PhaseTimingStats compile_to_local_executable;
     PhaseTimingStats xla_compile_op_compute;
+    std::vector<PhaseTimingRecord> phase_timing_records;
 
     std::string DebugString() const {
       return absl::StrCat(

@@ -124,6 +124,23 @@ DeviceCompilationProfiler::PhaseTimingStats* GetPhaseTimingStats(
   LOG(FATAL) << "Unknown compile phase.";
 }
 
+const char* GetPhaseName(DeviceCompilationProfiler::CompilePhase phase) {
+  switch (phase) {
+    case DeviceCompilationProfiler::CompilePhase::kSignatureBuild:
+      return "signature_build";
+    case DeviceCompilationProfiler::CompilePhase::kCacheLookup:
+      return "cache_lookup";
+    case DeviceCompilationProfiler::CompilePhase::kGetXlaCompilerArgsAndSnapshotVariables:
+      return "get_xla_compiler_args_and_snapshot_variables";
+    case DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable:
+      return "compile_to_local_executable";
+    case DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute:
+      return "xla_compile_op_compute";
+  }
+
+  LOG(FATAL) << "Unknown compile phase.";
+}
+
 std::string CsvEscape(const std::string& value) {
   std::string escaped;
   escaped.reserve(value.size() + 2);
@@ -192,6 +209,12 @@ void DeviceCompilationProfiler::RegisterPhaseTiming(
     PhaseTimingStats* phase_stats = GetPhaseTimingStats(&stats, phase);
     ++phase_stats->sample_count;
     phase_stats->cumulative_time_us += elapsed_time_us;
+  stats.phase_timing_records.push_back(PhaseTimingRecord{
+    phase,
+    static_cast<int64_t>(stats.phase_timing_records.size()) + 1,
+    phase_stats->sample_count,
+    elapsed_time_us,
+  });
   }
 
   if (const char* csv_path = GetCsvDumpPathFromEnv()) {
@@ -257,31 +280,15 @@ absl::Status DeviceCompilationProfiler::DumpCsv(const std::string& path) const {
   std::unique_ptr<WritableFile> file;
   TF_RETURN_IF_ERROR(env->NewWritableFile(path, &file));
   TF_RETURN_IF_ERROR(file->Append(
-      "cluster_name,compile_count,execution_count,cumulative_compile_time_us,"
-      "is_megamorphic,signature_build_count,signature_build_time_us,"
-      "cache_lookup_count,cache_lookup_time_us,"
-      "get_xla_compiler_args_and_snapshot_variables_count,"
-      "get_xla_compiler_args_and_snapshot_variables_time_us,"
-      "compile_to_local_executable_count,"
-      "compile_to_local_executable_time_us,"
-      "xla_compile_op_compute_count,xla_compile_op_compute_time_us\n"));
+      "cluster_name,phase,event_index,phase_sample_index,elapsed_time_us\n"));
 
   for (const auto& [name, stats] : stats_snapshot) {
-    TF_RETURN_IF_ERROR(file->Append(absl::StrCat(
-        CsvEscape(name), ",", stats.compile_count, ",",
-        stats.execution_count, ",", stats.cumulative_compile_time_us, ",",
-        stats.is_megamorphic ? "true" : "false", ",",
-        stats.signature_build.sample_count, ",",
-        stats.signature_build.cumulative_time_us, ",",
-        stats.cache_lookup.sample_count, ",",
-        stats.cache_lookup.cumulative_time_us, ",",
-        stats.get_xla_compiler_args_and_snapshot_variables.sample_count, ",",
-        stats.get_xla_compiler_args_and_snapshot_variables
-            .cumulative_time_us,
-        ",", stats.compile_to_local_executable.sample_count, ",",
-        stats.compile_to_local_executable.cumulative_time_us, ",",
-        stats.xla_compile_op_compute.sample_count, ",",
-        stats.xla_compile_op_compute.cumulative_time_us, "\n")));
+    for (const PhaseTimingRecord& record : stats.phase_timing_records) {
+      TF_RETURN_IF_ERROR(file->Append(absl::StrCat(
+          CsvEscape(name), ",", GetPhaseName(record.phase), ",",
+          record.event_index, ",", record.phase_sample_index, ",",
+          record.elapsed_time_us, "\n")));
+    }
   }
 
   return file->Close();
