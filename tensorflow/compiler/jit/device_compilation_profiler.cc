@@ -139,11 +139,18 @@ std::string CsvEscape(const std::string& value) {
   return escaped;
 }
 
+const char* GetCsvDumpPathFromEnv() {
+  const char* csv_path = std::getenv(kDeviceCompilationProfilerCsvPathEnvVar);
+  if (csv_path == nullptr || csv_path[0] == '\0') {
+    return nullptr;
+  }
+  return csv_path;
+}
+
 }  // namespace
 
 DeviceCompilationProfiler::~DeviceCompilationProfiler() {
-  const char* csv_path = std::getenv(kDeviceCompilationProfilerCsvPathEnvVar);
-  if (csv_path != nullptr && csv_path[0] != '\0') {
+  if (const char* csv_path = GetCsvDumpPathFromEnv()) {
     absl::Status dump_status = DumpCsv(csv_path);
     if (!dump_status.ok()) {
       LOG(ERROR) << "Failed to dump device compilation profiler CSV to "
@@ -178,12 +185,21 @@ void DeviceCompilationProfiler::RegisterExecution(
 
 void DeviceCompilationProfiler::RegisterPhaseTiming(
     const NameAttrList& function, CompilePhase phase, int64_t elapsed_time_us) {
-  mutex_lock lock(mu_);
-  ClusterCompileStats& stats =
-      GetOrCreateStatsLocked(&cluster_compile_stats_, function);
-  PhaseTimingStats* phase_stats = GetPhaseTimingStats(&stats, phase);
-  ++phase_stats->sample_count;
-  phase_stats->cumulative_time_us += elapsed_time_us;
+  {
+    mutex_lock lock(mu_);
+    ClusterCompileStats& stats =
+        GetOrCreateStatsLocked(&cluster_compile_stats_, function);
+    PhaseTimingStats* phase_stats = GetPhaseTimingStats(&stats, phase);
+    ++phase_stats->sample_count;
+    phase_stats->cumulative_time_us += elapsed_time_us;
+  }
+
+  if (const char* csv_path = GetCsvDumpPathFromEnv()) {
+    absl::Status dump_status = DumpCsv(csv_path);
+    if (!dump_status.ok()) {
+      LOG(ERROR) << "Failed to update device compilation profiler CSV at "
+                 << csv_path << ": " << dump_status;
+  }
 }
 
 absl::Status DeviceCompilationProfiler::RegisterCompilation(
@@ -232,7 +248,7 @@ absl::Status DeviceCompilationProfiler::DumpCsv(const std::string& path) const {
   }
 
   Env* env = Env::Default();
-  const std::string dirname = io::Dirname(path);
+  const std::string dirname(io::Dirname(path));
   if (!dirname.empty() && dirname != path) {
     TF_RETURN_IF_ERROR(env->RecursivelyCreateDir(dirname));
   }

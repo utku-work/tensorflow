@@ -183,6 +183,31 @@ TEST(DeviceCompilationProfilerTest, DumpsCsvOnDestructionWhenEnvVarIsSet) {
   ASSERT_EQ(::unsetenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH"), 0);
 }
 
+TEST(DeviceCompilationProfilerTest, UpdatesCsvWhenPhaseTimingIsRecorded) {
+  // Writing on each phase sample makes the CSV visible in long-lived servers.
+  Env* env = Env::Default();
+  std::string filename;
+  ASSERT_TRUE(env->LocalTempFilename(&filename));
+  ASSERT_EQ(::setenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH",
+                     filename.c_str(), 1),
+            0);
+
+  DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();
+  core::ScopedUnref profiler_ref(profiler);
+
+  NameAttrList function;
+  function.set_name("TestFunc");
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 9);
+
+  std::string contents;
+  TF_ASSERT_OK(ReadFileToString(env, filename, &contents));
+  EXPECT_NE(contents.find("\"TestFunc\",0,0,0,false,1,9"),
+            std::string::npos);
+
+  ASSERT_EQ(::unsetenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH"), 0);
+}
+
 TEST(DeviceCompilationProfilerTest, ShouldCompileClusterNotFound) {
   DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();
   core::ScopedUnref profiler_ref(profiler);
