@@ -15,23 +15,32 @@ limitations under the License.
 
 #include "tensorflow/compiler/jit/device_compilation_profiler.h"
 
+#include <cstdlib>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "absl/log/log.h"
 #include "absl/strings/str_cat.h"
 #include "tensorflow/compiler/jit/flags.h"
 #include "tensorflow/compiler/jit/xla_activity.pb.h"
 #include "tensorflow/compiler/jit/xla_activity_listener.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
 #include "tensorflow/core/framework/metrics.h"
+#include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/errors.h"
+#include "tensorflow/core/platform/path.h"
 #include "tensorflow/core/platform/status.h"
 #include "tsl/platform/mutex.h"
 
 namespace tensorflow {
 namespace {
+constexpr char kDeviceCompilationProfilerCsvPathEnvVar[] =
+    "TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH";
+
 bool ShouldBeMegamorphic(int64_t compile_count, int64_t execution_count) {
   int64_t kCompileThreshold = 10;
   const int64_t kMinExecutionsPerCompile = 50;
@@ -87,9 +96,61 @@ constexpr int64_t kDefaultCompilationThreshold = 2;
 // Maximum number of ongoing compilations.
 constexpr int64_t kMaxNumOngoingCompilations = kNumAsyncDeviceCompilerThreads;
 
+DeviceCompilationProfiler::ClusterCompileStats& GetOrCreateStatsLocked(
+    absl::flat_hash_map<std::string,
+                        DeviceCompilationProfiler::ClusterCompileStats>* stats,
+    const NameAttrList& function) {
+  return stats->emplace(function.name(),
+                        DeviceCompilationProfiler::ClusterCompileStats{})
+      .first->second;
+}
+
+DeviceCompilationProfiler::PhaseTimingStats* GetPhaseTimingStats(
+    DeviceCompilationProfiler::ClusterCompileStats* stats,
+    DeviceCompilationProfiler::CompilePhase phase) {
+  switch (phase) {
+    case DeviceCompilationProfiler::CompilePhase::kSignatureBuild:
+      return &stats->signature_build;
+    case DeviceCompilationProfiler::CompilePhase::kCacheLookup:
+      return &stats->cache_lookup;
+    case DeviceCompilationProfiler::CompilePhase::kGetXlaCompilerArgsAndSnapshotVariables:
+      return &stats->get_xla_compiler_args_and_snapshot_variables;
+    case DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable:
+      return &stats->compile_to_local_executable;
+    case DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute:
+      return &stats->xla_compile_op_compute;
+  }
+
+  LOG(FATAL) << "Unknown compile phase.";
+}
+
+std::string CsvEscape(const std::string& value) {
+  std::string escaped;
+  escaped.reserve(value.size() + 2);
+  escaped.push_back('"');
+  for (char ch : value) {
+    if (ch == '"') {
+      escaped.append("\"\"");
+    } else {
+      escaped.push_back(ch);
+    }
+  }
+  escaped.push_back('"');
+  return escaped;
+}
+
 }  // namespace
 
 DeviceCompilationProfiler::~DeviceCompilationProfiler() {
+  const char* csv_path = std::getenv(kDeviceCompilationProfilerCsvPathEnvVar);
+  if (csv_path != nullptr && csv_path[0] != '\0') {
+    absl::Status dump_status = DumpCsv(csv_path);
+    if (!dump_status.ok()) {
+      LOG(ERROR) << "Failed to dump device compilation profiler CSV to "
+                 << csv_path << ": " << dump_status;
+    }
+  }
+
   mutex_lock lock(mu_);
   cluster_compile_stats_.clear();
 }
@@ -110,10 +171,19 @@ DeviceCompilationProfiler::GetCompileStats(const NameAttrList& function) const {
 void DeviceCompilationProfiler::RegisterExecution(
     const NameAttrList& function) {
   mutex_lock lock(mu_);
-  auto it =
-      cluster_compile_stats_.emplace(function.name(), ClusterCompileStats{})
-          .first;
-  RegisterExecutionForCluster(function, &it->second);
+  RegisterExecutionForCluster(function,
+                              &GetOrCreateStatsLocked(&cluster_compile_stats_,
+                                                      function));
+}
+
+void DeviceCompilationProfiler::RegisterPhaseTiming(
+    const NameAttrList& function, CompilePhase phase, int64_t elapsed_time_us) {
+  mutex_lock lock(mu_);
+  ClusterCompileStats& stats =
+      GetOrCreateStatsLocked(&cluster_compile_stats_, function);
+  PhaseTimingStats* phase_stats = GetPhaseTimingStats(&stats, phase);
+  ++phase_stats->sample_count;
+  phase_stats->cumulative_time_us += elapsed_time_us;
 }
 
 absl::Status DeviceCompilationProfiler::RegisterCompilation(
@@ -125,31 +195,79 @@ absl::Status DeviceCompilationProfiler::RegisterCompilation(
 
   mutex_lock lock(mu_);
   // Create a stats entry if it doesn't already exist.
-  auto it =
-      cluster_compile_stats_.emplace(function.name(), ClusterCompileStats{})
-          .first;
+  ClusterCompileStats& stats =
+      GetOrCreateStatsLocked(&cluster_compile_stats_, function);
 
   const uint64 compile_time_s = compile_time_us / 1.0e6;
-  it->second.compile_count++;
-  it->second.cumulative_compile_time_us += compile_time_us;
-  VLOG(1) << "Compiled " << function_name << " " << it->second.compile_count
+  stats.compile_count++;
+  stats.cumulative_compile_time_us += compile_time_us;
+  VLOG(1) << "Compiled " << function_name << " " << stats.compile_count
           << " times, compile time: " << compile_time_us
-          << " us, cumulative: " << it->second.cumulative_compile_time_us
+          << " us, cumulative: " << stats.cumulative_compile_time_us
           << " us ("
           << tensorflow::strings::HumanReadableElapsedTime(compile_time_s)
           << " / "
           << tensorflow::strings::HumanReadableElapsedTime(
-                 it->second.cumulative_compile_time_us / 1.0e6)
+                 stats.cumulative_compile_time_us / 1.0e6)
           << ")";
 
   XlaJitCompilationActivity jit_compilation_activity;
   jit_compilation_activity.set_cluster_name(function_name);
-  jit_compilation_activity.set_compile_count(it->second.compile_count);
+  jit_compilation_activity.set_compile_count(stats.compile_count);
   jit_compilation_activity.set_compile_time_us(compile_time_us);
   jit_compilation_activity.set_cumulative_compile_time_us(
-      it->second.cumulative_compile_time_us);
+      stats.cumulative_compile_time_us);
   jit_compilation_activity.set_used_persistent_cache(used_persistent_cache);
   return BroadcastXlaActivity(std::move(jit_compilation_activity));
+}
+
+absl::Status DeviceCompilationProfiler::DumpCsv(const std::string& path) const {
+  std::vector<std::pair<std::string, ClusterCompileStats>> stats_snapshot;
+  {
+    mutex_lock lock(mu_);
+    stats_snapshot.reserve(cluster_compile_stats_.size());
+    for (const auto& [name, stats] : cluster_compile_stats_) {
+      stats_snapshot.emplace_back(name, stats);
+    }
+  }
+
+  Env* env = Env::Default();
+  const std::string dirname = io::Dirname(path);
+  if (!dirname.empty() && dirname != path) {
+    TF_RETURN_IF_ERROR(env->RecursivelyCreateDir(dirname));
+  }
+
+  std::unique_ptr<WritableFile> file;
+  TF_RETURN_IF_ERROR(env->NewWritableFile(path, &file));
+  TF_RETURN_IF_ERROR(file->Append(
+      "cluster_name,compile_count,execution_count,cumulative_compile_time_us,"
+      "is_megamorphic,signature_build_count,signature_build_time_us,"
+      "cache_lookup_count,cache_lookup_time_us,"
+      "get_xla_compiler_args_and_snapshot_variables_count,"
+      "get_xla_compiler_args_and_snapshot_variables_time_us,"
+      "compile_to_local_executable_count,"
+      "compile_to_local_executable_time_us,"
+      "xla_compile_op_compute_count,xla_compile_op_compute_time_us\n"));
+
+  for (const auto& [name, stats] : stats_snapshot) {
+    TF_RETURN_IF_ERROR(file->Append(absl::StrCat(
+        CsvEscape(name), ",", stats.compile_count, ",",
+        stats.execution_count, ",", stats.cumulative_compile_time_us, ",",
+        stats.is_megamorphic ? "true" : "false", ",",
+        stats.signature_build.sample_count, ",",
+        stats.signature_build.cumulative_time_us, ",",
+        stats.cache_lookup.sample_count, ",",
+        stats.cache_lookup.cumulative_time_us, ",",
+        stats.get_xla_compiler_args_and_snapshot_variables.sample_count, ",",
+        stats.get_xla_compiler_args_and_snapshot_variables
+            .cumulative_time_us,
+        ",", stats.compile_to_local_executable.sample_count, ",",
+        stats.compile_to_local_executable.cumulative_time_us, ",",
+        stats.xla_compile_op_compute.sample_count, ",",
+        stats.xla_compile_op_compute.cumulative_time_us, "\n")));
+  }
+
+  return file->Close();
 }
 
 bool DeviceCompilationProfiler::ShouldCompileCluster(

@@ -31,6 +31,25 @@ class DeviceCompilationProfiler : public ResourceBase {
   DeviceCompilationProfiler() = default;
   ~DeviceCompilationProfiler() override;
 
+  enum class CompilePhase {
+    kSignatureBuild,
+    kCacheLookup,
+    kGetXlaCompilerArgsAndSnapshotVariables,
+    kCompileToLocalExecutable,
+    kXlaCompileOpCompute,
+  };
+
+  struct PhaseTimingStats {
+    int64_t sample_count = 0;
+    int64_t cumulative_time_us = 0;
+
+    std::string DebugString(const char* phase_name) const {
+      return absl::StrCat(phase_name, "={sample_count=", sample_count,
+                          ", cumulative_time_us=", cumulative_time_us,
+                          "}");
+    }
+  };
+
   struct ClusterCompileStats {
     // Number of times the cluster has been (re-)compiled.
     int64_t compile_count = 0;
@@ -46,12 +65,30 @@ class DeviceCompilationProfiler : public ResourceBase {
     // tagged megamorphic, it stays megamorphic forever.
     bool is_megamorphic = false;
 
+    // Aggregated phase timings recorded while compiling or preparing the
+    // cluster.
+    PhaseTimingStats signature_build;
+    PhaseTimingStats cache_lookup;
+    PhaseTimingStats get_xla_compiler_args_and_snapshot_variables;
+    PhaseTimingStats compile_to_local_executable;
+    PhaseTimingStats xla_compile_op_compute;
+
     std::string DebugString() const {
       return absl::StrCat(
           "DeviceCompilationProfiler::ClusterCompileStats {compile_count=",
           compile_count, ", execution_count=", execution_count,
           ", cumulative_compile_time_us=", cumulative_compile_time_us,
-          ", is_megamorphic=", is_megamorphic, "}");
+        ", is_megamorphic=", is_megamorphic, ", ",
+        signature_build.DebugString("signature_build"), ", ",
+        cache_lookup.DebugString("cache_lookup"), ", ",
+        get_xla_compiler_args_and_snapshot_variables.DebugString(
+          "get_xla_compiler_args_and_snapshot_variables"),
+        ", ",
+        compile_to_local_executable.DebugString(
+          "compile_to_local_executable"),
+        ", ",
+        xla_compile_op_compute.DebugString("xla_compile_op_compute"),
+        "}");
     }
   };
 
@@ -71,12 +108,19 @@ class DeviceCompilationProfiler : public ResourceBase {
   // sets the megamorphic bit accordingly).
   void RegisterExecution(const NameAttrList& function);
 
+  // Registers a sampled timing for one phase of cluster compilation.
+  void RegisterPhaseTiming(const NameAttrList& function, CompilePhase phase,
+                           int64_t elapsed_time_us);
+
   // Registers a cluster compilation. Increments the compilation count and
   // accumulates the compile time for the given cluster. Also broadcasts an
   // XlaJitCompilationActivity.
   virtual absl::Status RegisterCompilation(const NameAttrList& function,
                                            int64_t compile_time_us,
                                            bool used_persistent_cache);
+
+  // Dumps the currently aggregated per-cluster stats as CSV.
+  absl::Status DumpCsv(const std::string& path) const;
 
   void IncrementOngoingAsyncCompilations();
   void DecrementOngoingAsyncCompilations();

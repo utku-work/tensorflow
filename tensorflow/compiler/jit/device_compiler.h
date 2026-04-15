@@ -449,7 +449,6 @@ absl::Status DeviceCompiler<ExecutableType, ClientType>::CompileImpl(
     const XlaCompiler::CompilationResult** out_compilation_result,
     ExecutableType** out_executable) {
   Env* env = Env::Default();
-  auto start_time = env->NowMicros();
   DCHECK_NE(out_executable, nullptr);
   VLOG(2) << "DeviceCompiler::Compile " << DebugString();
 
@@ -463,8 +462,9 @@ absl::Status DeviceCompiler<ExecutableType, ClientType>::CompileImpl(
   TF_ASSIGN_OR_RETURN(auto signature,
                       DeviceCompilationClusterSignature::Build(function, args));
   auto SignatureBuildend_time = env->NowMicros();
-  LOG(INFO) << "Signature Build Time: "
-            << SignatureBuildend_time - SignatureBuildstart_time << "\n";
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild,
+      SignatureBuildend_time - SignatureBuildstart_time);
 
   // The outer lock protects the existence of the mutex in the map.
   mutex* cluster_mutex;
@@ -490,8 +490,9 @@ absl::Status DeviceCompiler<ExecutableType, ClientType>::CompileImpl(
   auto CacheCheckstart_time = env->NowMicros();
   auto cache_value = cache_->LookupOrCreate(signature);
   auto CacheCheckend_time = env->NowMicros();
-  LOG(INFO) << "Cache Check Time: "
-            << CacheCheckend_time - CacheCheckstart_time << "\n";
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kCacheLookup,
+      CacheCheckend_time - CacheCheckstart_time);
 
   int64_t current_request_count = cache_value.request_count;
   VLOG(2) << "Compilation cache entry hit: "

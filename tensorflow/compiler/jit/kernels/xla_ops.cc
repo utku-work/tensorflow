@@ -109,6 +109,32 @@ auto* xla_launch_counter = monitoring::Counter<1>::New(
     "/tensorflow/core/xla_launch_counter",
     "The number of times a XlaLaunch is called.", "device");
 
+absl::StatusOr<DeviceCompilationProfiler*> GetOrCreateCompilationProfiler(
+    OpKernelContext* ctx, const XlaPlatformInfo& platform_info,
+    bool use_pjrt) {
+  ResourceMgr* rm = ctx->resource_manager();
+  std::string profiler_name = "device_compilation_profiler";
+  if (use_pjrt) {
+    TF_ASSIGN_OR_RETURN(rm,
+                        GetResourceMgrForDeviceCompiler(*ctx,
+                                                        platform_info.device_type()));
+    profiler_name =
+        GetPjRtDeviceCompilationProfilerResourceName(platform_info.device_type());
+  }
+  if (rm == nullptr) {
+    return absl::InternalError("No resource manager.");
+  }
+
+  DeviceCompilationProfiler* profiler = nullptr;
+  TF_RETURN_IF_ERROR(rm->LookupOrCreate<DeviceCompilationProfiler>(
+      rm->default_container(), profiler_name, &profiler,
+      [](DeviceCompilationProfiler** profiler) {
+        *profiler = new DeviceCompilationProfiler();
+        return absl::OkStatus();
+      }));
+  return profiler;
+}
+
 // A closure describing how to run a compiled version of a TensorFlow function.
 //
 // It may seem unusual to stick the resource variable snapshots in this class.
@@ -1068,6 +1094,11 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
       GetXlaOpsCommonFlags()
           ->tf_xla_use_device_api.IsEnabledInXlaCompileAndRunForDevice(
               platform_info_.device_type());
+  auto profiler_or =
+      GetOrCreateCompilationProfiler(ctx, platform_info_, use_pjrt);
+  OP_REQUIRES_OK(ctx, profiler_or.status());
+  DeviceCompilationProfiler* profiler = *profiler_or;
+  core::ScopedUnref profiler_ref(profiler);
 
   if (GetXlaOpsCommonFlags()->tf_xla_always_defer_compilation ||
       cannot_compile_cluster) {
@@ -1077,11 +1108,12 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
     auto args_and_variables_snapshot = GetXlaCompilerArgsAndSnapshotVariables(
         resources_, constants_, inputs, ctx);
     auto EndTimeGetXlaCompilerArgsAndSnapshotVariables = env->NowMicros();
-
-    LOG(INFO) << "GetXlaCompilerArgsAndSnapshotVariables: "
-              << EndTimeGetXlaCompilerArgsAndSnapshotVariables -
-                     StartTimeGetXlaCompilerArgsAndSnapshotVariables
-              << "\n";
+    profiler->RegisterPhaseTiming(
+      function_,
+      DeviceCompilationProfiler::CompilePhase::
+        kGetXlaCompilerArgsAndSnapshotVariables,
+      EndTimeGetXlaCompilerArgsAndSnapshotVariables -
+        StartTimeGetXlaCompilerArgsAndSnapshotVariables);
 
     OP_REQUIRES_OK(ctx, args_and_variables_snapshot.status());
     const std::vector<XlaCompiler::Argument>& args =
@@ -1104,10 +1136,11 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
           ctx, function_, has_ref_vars_, platform_info_, args, compile_mode,
           /*may_alias_resource_update=*/false, &client, &kernel, &executable);
       auto EndTimeCompileToLocalExecutable = env->NowMicros();
-      LOG(INFO) << "CompileToLocalExecutable: "
-            << EndTimeCompileToLocalExecutable -
-               StartTimeCompileToLocalExecutable
-            << "\n";
+      profiler->RegisterPhaseTiming(
+        function_,
+        DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable,
+        EndTimeCompileToLocalExecutable -
+          StartTimeCompileToLocalExecutable);
     }
 
     if (compile_mode != DeviceCompileMode::kLazy ||
@@ -1153,6 +1186,9 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
     compilation_successful.scalar<bool>()() = false;
     ctx->set_output(0, compilation_key);
     ctx->set_output(1, compilation_successful);
+    profiler->RegisterPhaseTiming(
+        function_, DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute,
+        env->NowMicros() - start_time);
     return;
   }
 
@@ -1182,9 +1218,9 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
 
   ctx->set_output(0, compilation_key);
   ctx->set_output(1, compilation_successful);
-  auto end_time = env->NowMicros();
-  auto elapsed_time = end_time - start_time;
-  LOG(INFO) << "XlaCompileOp::Compute: " << elapsed_time << "\n";
+  profiler->RegisterPhaseTiming(
+      function_, DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute,
+      env->NowMicros() - start_time);
 }
 
 XlaRunOp::XlaRunOp(OpKernelConstruction* ctx)
