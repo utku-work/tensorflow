@@ -716,6 +716,7 @@ absl::Status CompileToLocalExecutable(
     }
     return status;
   } else {
+    LOG(INFO) << " Called CompileIfNeeded \n";
     return xla_device_compiler->CompileIfNeeded(
         options, function, args, compile_options, compile_mode, profiler,
         compilation_result, executable);
@@ -1039,6 +1040,8 @@ XlaCompileOp::XlaCompileOp(OpKernelConstruction* ctx)
 void XlaCompileOp::Compute(OpKernelContext* ctx) {
   VLOG(3) << "XlaCompileOp " << def().name()
           << (must_compile_ ? "(must-compile)" : "");
+  Env* env = Env::Default();
+  auto start_time = env->NowMicros();
   const XlaCompiler::CompilationResult* kernel = nullptr;
   xla::LocalClient* client = nullptr;
   xla::LocalExecutable* executable = nullptr;
@@ -1070,8 +1073,16 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
       cannot_compile_cluster) {
     executable = nullptr;
   } else {
+    auto StartTimeGetXlaCompilerArgsAndSnapshotVariables = env->NowMicros();
     auto args_and_variables_snapshot = GetXlaCompilerArgsAndSnapshotVariables(
         resources_, constants_, inputs, ctx);
+    auto EndTimeGetXlaCompilerArgsAndSnapshotVariables = env->NowMicros();
+
+    LOG(INFO) << "GetXlaCompilerArgsAndSnapshotVariables: "
+              << EndTimeGetXlaCompilerArgsAndSnapshotVariables -
+                     StartTimeGetXlaCompilerArgsAndSnapshotVariables
+              << "\n";
+
     OP_REQUIRES_OK(ctx, args_and_variables_snapshot.status());
     const std::vector<XlaCompiler::Argument>& args =
         args_and_variables_snapshot->first;
@@ -1088,9 +1099,15 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
           /*may_alias_resource_update=*/false, &kernel, &pjrt_client,
           &pjrt_executable);
     } else {
+      auto StartTimeCompileToLocalExecutable = env->NowMicros();
       status = CompileToLocalExecutable(
           ctx, function_, has_ref_vars_, platform_info_, args, compile_mode,
           /*may_alias_resource_update=*/false, &client, &kernel, &executable);
+      auto EndTimeCompileToLocalExecutable = env->NowMicros();
+      LOG(INFO) << "CompileToLocalExecutable: "
+            << EndTimeCompileToLocalExecutable -
+               StartTimeCompileToLocalExecutable
+            << "\n";
     }
 
     if (compile_mode != DeviceCompileMode::kLazy ||
@@ -1165,6 +1182,9 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
 
   ctx->set_output(0, compilation_key);
   ctx->set_output(1, compilation_successful);
+  auto end_time = env->NowMicros();
+  auto elapsed_time = end_time - start_time;
+  LOG(INFO) << "XlaCompileOp::Compute: " << elapsed_time << "\n";
 }
 
 XlaRunOp::XlaRunOp(OpKernelConstruction* ctx)

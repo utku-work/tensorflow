@@ -26,6 +26,7 @@ limitations under the License.
 #include "absl/base/call_once.h"
 #include "absl/base/nullability.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/log.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
 #include "tensorflow/compiler/jit/device_compilation_cache.h"
@@ -42,6 +43,7 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/resource_base.h"
 #include "tensorflow/core/lib/core/threadpool.h"
+#include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/thread_annotations.h"
 
@@ -446,6 +448,8 @@ absl::Status DeviceCompiler<ExecutableType, ClientType>::CompileImpl(
     DeviceCompilationProfiler* profiler,
     const XlaCompiler::CompilationResult** out_compilation_result,
     ExecutableType** out_executable) {
+  Env* env = Env::Default();
+  auto start_time = env->NowMicros();
   DCHECK_NE(out_executable, nullptr);
   VLOG(2) << "DeviceCompiler::Compile " << DebugString();
 
@@ -455,8 +459,12 @@ absl::Status DeviceCompiler<ExecutableType, ClientType>::CompileImpl(
       VLOG(3) << i << ": " << args[i].HumanString();
     }
   }
+  auto SignatureBuildstart_time = env->NowMicros();
   TF_ASSIGN_OR_RETURN(auto signature,
                       DeviceCompilationClusterSignature::Build(function, args));
+  auto SignatureBuildend_time = env->NowMicros();
+  LOG(INFO) << "Signature Build Time: "
+            << SignatureBuildend_time - SignatureBuildstart_time << "\n";
 
   // The outer lock protects the existence of the mutex in the map.
   mutex* cluster_mutex;
@@ -479,7 +487,11 @@ absl::Status DeviceCompiler<ExecutableType, ClientType>::CompileImpl(
   // TODO(phawkins): this locking will need to be restructured when we implement
   // cache eviction.
   mutex_lock cluster_compile_lock(*cluster_mutex);
+  auto CacheCheckstart_time = env->NowMicros();
   auto cache_value = cache_->LookupOrCreate(signature);
+  auto CacheCheckend_time = env->NowMicros();
+  LOG(INFO) << "Cache Check Time: "
+            << CacheCheckend_time - CacheCheckstart_time << "\n";
 
   int64_t current_request_count = cache_value.request_count;
   VLOG(2) << "Compilation cache entry hit: "
