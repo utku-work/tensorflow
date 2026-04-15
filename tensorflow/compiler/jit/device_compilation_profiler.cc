@@ -199,6 +199,7 @@ void DeviceCompilationProfiler::RegisterPhaseTiming(
     if (!dump_status.ok()) {
       LOG(ERROR) << "Failed to update device compilation profiler CSV at "
                  << csv_path << ": " << dump_status;
+    }
   }
 }
 
