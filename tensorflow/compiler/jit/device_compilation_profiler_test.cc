@@ -183,8 +183,9 @@ TEST(DeviceCompilationProfilerTest, DumpsCsvOnDestructionWhenEnvVarIsSet) {
   ASSERT_EQ(::unsetenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH"), 0);
 }
 
-TEST(DeviceCompilationProfilerTest, UpdatesCsvWhenPhaseTimingIsRecorded) {
-  // Writing on each phase sample should keep later requests visible too.
+TEST(DeviceCompilationProfilerTest, UpdatesCsvWhenCompileOpTimingIsRecorded) {
+  // Writing once per completed compile-op sample keeps later requests visible
+  // without charging CSV I/O to inner helper timings.
   Env* env = Env::Default();
   std::string filename;
   ASSERT_TRUE(env->LocalTempFilename(&filename));
@@ -201,6 +202,9 @@ TEST(DeviceCompilationProfilerTest, UpdatesCsvWhenPhaseTimingIsRecorded) {
       function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 9);
   profiler->RegisterPhaseTiming(
       function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 4);
+    profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute,
+      13);
 
   std::string contents;
   TF_ASSERT_OK(ReadFileToString(env, filename, &contents));
@@ -208,6 +212,8 @@ TEST(DeviceCompilationProfilerTest, UpdatesCsvWhenPhaseTimingIsRecorded) {
             std::string::npos);
   EXPECT_NE(contents.find("\"TestFunc\",signature_build,2,2,4"),
             std::string::npos);
+    EXPECT_NE(contents.find("\"TestFunc\",xla_compile_op_compute,3,1,13"),
+        std::string::npos);
 
   ASSERT_EQ(::unsetenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH"), 0);
 }

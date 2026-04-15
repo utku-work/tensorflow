@@ -180,6 +180,10 @@ const char* GetCsvDumpPathFromEnv() {
   return csv_path;
 }
 
+bool ShouldDumpCsvAfterPhase(DeviceCompilationProfiler::CompilePhase phase) {
+  return phase == DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute;
+}
+
 }  // namespace
 
 DeviceCompilationProfiler::~DeviceCompilationProfiler() {
@@ -233,7 +237,11 @@ void DeviceCompilationProfiler::RegisterPhaseTiming(
     });
   }
 
-  if (const char* csv_path = GetCsvDumpPathFromEnv()) {
+  if (ShouldDumpCsvAfterPhase(phase)) {
+    const char* csv_path = GetCsvDumpPathFromEnv();
+    if (csv_path == nullptr) {
+      return;
+    }
     absl::Status dump_status = DumpCsv(csv_path);
     if (!dump_status.ok()) {
       LOG(ERROR) << "Failed to update device compilation profiler CSV at "
