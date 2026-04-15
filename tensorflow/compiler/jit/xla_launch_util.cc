@@ -566,33 +566,85 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
   std::vector<XlaCompiler::Argument> out;
   out.resize(inputs.size());
 
+  size_t constant_index_pos = 0;
+  auto consume_is_constant = [&](int64_t input_num) {
+    while (constant_index_pos < must_be_constant_idxs.size() &&
+           must_be_constant_idxs[constant_index_pos] < input_num) {
+      ++constant_index_pos;
+    }
+    const bool is_constant =
+        constant_index_pos < must_be_constant_idxs.size() &&
+        must_be_constant_idxs[constant_index_pos] == input_num;
+    if (is_constant) {
+      ++constant_index_pos;
+    }
+    return is_constant;
+  };
+
+  if (variable_args.empty()) {
+    for (int64_t input_num = 0; input_num < inputs.size(); ++input_num) {
+      const Tensor* input = inputs[input_num];
+      const bool is_constant = consume_is_constant(input_num);
+
+      XlaCompiler::Argument& arg = out[input_num];
+      if (is_constant) {
+        arg.kind = XlaCompiler::Argument::kConstant;
+        arg.type = input->dtype();
+        arg.shape = input->shape();
+        arg.constant_value = *input;
+      } else {
+        // Normal inputs.
+        TF_RET_CHECK(input->dtype() != DT_RESOURCE);
+        if (input->NumElements() > 0) {
+          arg.kind = XlaCompiler::Argument::kParameter;
+        } else {
+          arg.kind = XlaCompiler::Argument::kConstant;
+          arg.constant_value = *input;
+        }
+        arg.type = input->dtype();
+        arg.shape = input->shape();
+      }
+    }
+
+    return out;
+  }
+
   // TODO(cheshire): Avoid duplication with framework/op_kernel.h
   DeviceContext* device_context = nullptr;
-  if (device != nullptr) {
+  bool using_default_context = false;
+  auto cleanup = absl::MakeCleanup([&] {
+    if (device_context != nullptr && !using_default_context) {
+      device_context->Unref();
+    }
+  });
+  auto maybe_get_device_context = [&]() -> absl::Status {
+    if (device == nullptr || device_context != nullptr || using_default_context) {
+      return absl::OkStatus();
+    }
+
     TF_RETURN_IF_ERROR(device->TryGetDeviceContext(&device_context));
-    bool using_default_context = false;
-    auto cleanup = absl::MakeCleanup([&] {
-      if (device_context != nullptr && !using_default_context) {
-        device_context->Unref();
-      }
-    });
     if (device_context == nullptr) {
       using_default_context = true;
       auto* dev_info = device->tensorflow_accelerator_device_info();
-      if (dev_info) device_context = dev_info->default_context;
+      if (dev_info) {
+        device_context = dev_info->default_context;
+      }
     }
-  }
+    return absl::OkStatus();
+  };
 
   absl::flat_hash_map<int, const VariableInfo*> variable_info_lookup;
   TF_CHECK_OK(CreateVariableInfoLookup(variable_args, variable_info_lookup));
   for (int64_t input_num = 0; input_num < inputs.size(); ++input_num) {
     const Tensor* input = inputs[input_num];
+    const bool is_constant = consume_is_constant(input_num);
 
     XlaCompiler::Argument& arg = out[input_num];
-    if (variable_info_lookup.count(input_num) && device != nullptr) {
+    auto variable_it = variable_info_lookup.find(input_num);
+    if (variable_it != variable_info_lookup.end() && device != nullptr) {
       // Handles resource variables.
       TF_RET_CHECK(input->dtype() == DT_RESOURCE);
-      const VariableInfo& variable = *variable_info_lookup[input_num];
+      const VariableInfo& variable = *variable_it->second;
       arg.name = std::string(variable.name());
       arg.kind = XlaCompiler::Argument::kResource;
       arg.resource_kind = XlaResource::kVariable;
@@ -612,10 +664,11 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
         arg.shape = TensorShape();
       }
 
-      if (absl::c_binary_search(must_be_constant_idxs, input_num)) {
+      if (is_constant) {
         TF_RET_CHECK(variable.var() && variable.var()->is_initialized);
         const Tensor* value = variable.var()->tensor();
         Tensor value_on_host(value->dtype(), value->shape());
+        TF_RETURN_IF_ERROR(maybe_get_device_context());
         if (!device_context) {
           value_on_host = *value;
         } else {
@@ -625,7 +678,7 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
         arg.kind = XlaCompiler::Argument::kConstantResource;
         arg.constant_value = value_on_host;
       }
-    } else if (absl::c_binary_search(must_be_constant_idxs, input_num)) {
+    } else if (is_constant) {
       arg.kind = XlaCompiler::Argument::kConstant;
       arg.type = input->dtype();
       arg.shape = input->shape();

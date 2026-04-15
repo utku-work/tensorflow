@@ -526,6 +526,32 @@ TEST(XlaLaunchUtilTest, GetPjRtExecuteOptions) {
   EXPECT_TRUE(options.use_major_to_minor_data_layout_for_callbacks);
 }
 
+TEST_F(PjRtExecutionUtilTest,
+       BuildXlaCompilerArgumentsWithoutVariablesBuildsExpectedKinds) {
+  // Zero-resource clusters should classify constants and parameters without
+  // building variable lookups or consulting device context eagerly.
+  Tensor* constant0 = CreateHostTensor<int32>(TensorShape({2}), {1, 2});
+  Tensor* parameter = CreateHostTensor<int32>(TensorShape({2}), {3, 4});
+  Tensor* empty = CreateHostTensor<int32>(TensorShape({0}), {});
+  Tensor* constant3 = CreateHostTensor<int32>(TensorShape({1}), {5});
+  std::vector<const Tensor*> inputs = {constant0, parameter, empty, constant3};
+  std::vector<int> must_be_constant_idxs = {0, 3};
+  std::vector<VariableInfo> variables;
+
+  TF_ASSERT_OK_AND_ASSIGN(
+      std::vector<XlaCompiler::Argument> args,
+      XlaComputationLaunchContext::BuildXlaCompilerArguments(
+          must_be_constant_idxs, inputs, variables, device_));
+
+  ASSERT_EQ(args.size(), 4);
+  EXPECT_EQ(args[0].kind, XlaCompiler::Argument::kConstant);
+  EXPECT_EQ(args[1].kind, XlaCompiler::Argument::kParameter);
+  EXPECT_EQ(args[2].kind, XlaCompiler::Argument::kConstant);
+  EXPECT_EQ(args[3].kind, XlaCompiler::Argument::kConstant);
+  EXPECT_EQ(args[0].constant_value.vec<int32>()(0), 1);
+  EXPECT_EQ(args[3].constant_value.scalar<int32>()(), 5);
+}
+
 TEST_F(PjRtExecutionUtilTest, RunPjRtExecutable) {
   XlaOpRegistry::RegisterCompilationKernels();
   TF_EXPECT_OK(NodeDefBuilder("AddV2", "AddV2")
