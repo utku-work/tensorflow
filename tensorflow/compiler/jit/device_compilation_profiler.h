@@ -38,6 +38,9 @@ class DeviceCompilationProfiler : public ResourceBase {
     kGetVariableInfosFromInputs,
     kLockVariables,
     kSnapshotResourceVariables,
+    kBuildXlaCompilerArgumentsPrepareConstantIndices,
+    kBuildXlaCompilerArgumentsPrepareOutputVector,
+    kBuildXlaCompilerArgumentsPrepareVariableLookup,
     kBuildXlaCompilerArgumentsSetup,
     kBuildXlaCompilerArgumentsConstantInputs,
     kBuildXlaCompilerArgumentsParameterInputs,
@@ -88,6 +91,9 @@ class DeviceCompilationProfiler : public ResourceBase {
     PhaseTimingStats get_variable_infos_from_inputs;
     PhaseTimingStats lock_variables;
     PhaseTimingStats snapshot_resource_variables;
+    PhaseTimingStats build_xla_compiler_arguments_prepare_constant_indices;
+    PhaseTimingStats build_xla_compiler_arguments_prepare_output_vector;
+    PhaseTimingStats build_xla_compiler_arguments_prepare_variable_lookup;
     PhaseTimingStats build_xla_compiler_arguments_setup;
     PhaseTimingStats build_xla_compiler_arguments_constant_inputs;
     PhaseTimingStats build_xla_compiler_arguments_parameter_inputs;
@@ -113,6 +119,15 @@ class DeviceCompilationProfiler : public ResourceBase {
         ", ",
         snapshot_resource_variables.DebugString(
             "snapshot_resource_variables"),
+        ", ",
+        build_xla_compiler_arguments_prepare_constant_indices.DebugString(
+          "build_xla_compiler_arguments_prepare_constant_indices"),
+        ", ",
+        build_xla_compiler_arguments_prepare_output_vector.DebugString(
+          "build_xla_compiler_arguments_prepare_output_vector"),
+        ", ",
+        build_xla_compiler_arguments_prepare_variable_lookup.DebugString(
+          "build_xla_compiler_arguments_prepare_variable_lookup"),
         ", ",
         build_xla_compiler_arguments_setup.DebugString(
           "build_xla_compiler_arguments_setup"),

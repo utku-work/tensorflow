@@ -119,6 +119,12 @@ DeviceCompilationProfiler::PhaseTimingStats* GetPhaseTimingStats(
       return &stats->lock_variables;
     case DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables:
       return &stats->snapshot_resource_variables;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsPrepareConstantIndices:
+      return &stats->build_xla_compiler_arguments_prepare_constant_indices;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsPrepareOutputVector:
+      return &stats->build_xla_compiler_arguments_prepare_output_vector;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsPrepareVariableLookup:
+      return &stats->build_xla_compiler_arguments_prepare_variable_lookup;
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup:
       return &stats->build_xla_compiler_arguments_setup;
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputs:
@@ -152,6 +158,12 @@ const char* GetPhaseName(DeviceCompilationProfiler::CompilePhase phase) {
       return "lock_variables";
     case DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables:
       return "snapshot_resource_variables";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsPrepareConstantIndices:
+      return "build_xla_compiler_arguments_prepare_constant_indices";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsPrepareOutputVector:
+      return "build_xla_compiler_arguments_prepare_output_vector";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsPrepareVariableLookup:
+      return "build_xla_compiler_arguments_prepare_variable_lookup";
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup:
       return "build_xla_compiler_arguments_setup";
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputs:
