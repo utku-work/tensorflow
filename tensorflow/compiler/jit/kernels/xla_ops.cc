@@ -423,7 +423,8 @@ GetXlaCompilerArgsAndSnapshotVariables(
   TF_ASSIGN_OR_RETURN(result.first,
                       XlaComputationLaunchContext::BuildXlaCompilerArguments(
                           must_be_constant_idxs, inputs, variable_infos,
-                          static_cast<Device*>(ctx->device())));
+                          static_cast<Device*>(ctx->device()), &function,
+                          profiler));
   profiler->RegisterPhaseTiming(
     function,
     DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArguments,

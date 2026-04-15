@@ -119,6 +119,14 @@ DeviceCompilationProfiler::PhaseTimingStats* GetPhaseTimingStats(
       return &stats->lock_variables;
     case DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables:
       return &stats->snapshot_resource_variables;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup:
+      return &stats->build_xla_compiler_arguments_setup;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputs:
+      return &stats->build_xla_compiler_arguments_constant_inputs;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputs:
+      return &stats->build_xla_compiler_arguments_parameter_inputs;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsResourceInputs:
+      return &stats->build_xla_compiler_arguments_resource_inputs;
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArguments:
       return &stats->build_xla_compiler_arguments;
     case DeviceCompilationProfiler::CompilePhase::kGetXlaCompilerArgsAndSnapshotVariables:
@@ -144,6 +152,14 @@ const char* GetPhaseName(DeviceCompilationProfiler::CompilePhase phase) {
       return "lock_variables";
     case DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables:
       return "snapshot_resource_variables";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup:
+      return "build_xla_compiler_arguments_setup";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputs:
+      return "build_xla_compiler_arguments_constant_inputs";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputs:
+      return "build_xla_compiler_arguments_parameter_inputs";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsResourceInputs:
+      return "build_xla_compiler_arguments_resource_inputs";
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArguments:
       return "build_xla_compiler_arguments";
     case DeviceCompilationProfiler::CompilePhase::kGetXlaCompilerArgsAndSnapshotVariables:

@@ -31,6 +31,8 @@ limitations under the License.
 #include "tensorflow/compiler/jit/pjrt_tensor_buffer_util.h"
 #include "tensorflow/compiler/jit/variable_info.h"
 #include "tensorflow/compiler/jit/variable_info_util.h"
+#include "tensorflow/compiler/jit/device_compilation_profiler.h"
+#include "tensorflow/core/platform/env.h"
 #include "tensorflow/compiler/tf2xla/const_analysis.h"
 #include "tensorflow/compiler/tf2xla/shape_util.h"
 #include "tensorflow/compiler/tf2xla/xla_compiler.h"
@@ -555,7 +557,21 @@ absl::StatusOr<std::vector<XlaCompiler::Argument>>
 XlaComputationLaunchContext::BuildXlaCompilerArguments(
     absl::Span<int const> must_be_constant_idxs,
     absl::Span<const Tensor* const> inputs,
-    absl::Span<VariableInfo const> variable_args, Device* device) {
+    absl::Span<VariableInfo const> variable_args, Device* device,
+    const NameAttrList* function, DeviceCompilationProfiler* profiler) {
+  const bool record_phase_timings = function != nullptr && profiler != nullptr;
+  Env* env = record_phase_timings ? Env::Default() : nullptr;
+  const int64_t build_start_time =
+      record_phase_timings ? env->NowMicros() : 0;
+  int64_t constant_inputs_time_us = 0;
+  int64_t parameter_inputs_time_us = 0;
+  int64_t resource_inputs_time_us = 0;
+  auto register_phase_timing = [&](DeviceCompilationProfiler::CompilePhase phase,
+                                   int64_t elapsed_time_us) {
+    if (record_phase_timings) {
+      profiler->RegisterPhaseTiming(*function, phase, elapsed_time_us);
+    }
+  };
   if (!must_be_constant_idxs.empty() &&
       !absl::c_is_sorted(must_be_constant_idxs)) {
     return absl::InvalidArgumentError("must_be_constant_idxs is not sorted");
@@ -582,9 +598,13 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
   };
 
   if (variable_args.empty()) {
+    const int64_t setup_end_time =
+        record_phase_timings ? env->NowMicros() : 0;
     for (int64_t input_num = 0; input_num < inputs.size(); ++input_num) {
       const Tensor* input = inputs[input_num];
       const bool is_constant = consume_is_constant(input_num);
+      const int64_t branch_start_time =
+          record_phase_timings ? env->NowMicros() : 0;
 
       XlaCompiler::Argument& arg = out[input_num];
       if (is_constant) {
@@ -592,6 +612,9 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
         arg.type = input->dtype();
         arg.shape = input->shape();
         arg.constant_value = *input;
+        if (record_phase_timings) {
+          constant_inputs_time_us += env->NowMicros() - branch_start_time;
+        }
       } else {
         // Normal inputs.
         TF_RET_CHECK(input->dtype() != DT_RESOURCE);
@@ -603,8 +626,24 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
         }
         arg.type = input->dtype();
         arg.shape = input->shape();
+        if (record_phase_timings) {
+          parameter_inputs_time_us += env->NowMicros() - branch_start_time;
+        }
       }
     }
+
+    register_phase_timing(
+        DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup,
+        setup_end_time - build_start_time);
+    register_phase_timing(
+        DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputs,
+        constant_inputs_time_us);
+    register_phase_timing(
+        DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputs,
+        parameter_inputs_time_us);
+    register_phase_timing(
+        DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsResourceInputs,
+        resource_inputs_time_us);
 
     return out;
   }
@@ -635,9 +674,13 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
 
   absl::flat_hash_map<int, const VariableInfo*> variable_info_lookup;
   TF_CHECK_OK(CreateVariableInfoLookup(variable_args, variable_info_lookup));
+  const int64_t setup_end_time =
+      record_phase_timings ? env->NowMicros() : 0;
   for (int64_t input_num = 0; input_num < inputs.size(); ++input_num) {
     const Tensor* input = inputs[input_num];
     const bool is_constant = consume_is_constant(input_num);
+    const int64_t branch_start_time =
+        record_phase_timings ? env->NowMicros() : 0;
 
     XlaCompiler::Argument& arg = out[input_num];
     auto variable_it = variable_info_lookup.find(input_num);
@@ -678,11 +721,17 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
         arg.kind = XlaCompiler::Argument::kConstantResource;
         arg.constant_value = value_on_host;
       }
+      if (record_phase_timings) {
+        resource_inputs_time_us += env->NowMicros() - branch_start_time;
+      }
     } else if (is_constant) {
       arg.kind = XlaCompiler::Argument::kConstant;
       arg.type = input->dtype();
       arg.shape = input->shape();
       arg.constant_value = *input;
+      if (record_phase_timings) {
+        constant_inputs_time_us += env->NowMicros() - branch_start_time;
+      }
     } else {
       // Normal inputs.
       TF_RET_CHECK(input->dtype() != DT_RESOURCE);
@@ -725,7 +774,9 @@ absl::Status PreparePjRtExecutableArguments(
     //
     // 2. Old fashion Tensor with raw device memory pointer. This case occurs
     // when the producer is a non-XLA TF GPU kernel or function (e.g.
-    // tf.matmul).
+      if (record_phase_timings) {
+        parameter_inputs_time_us += env->NowMicros() - branch_start_time;
+      }
     //
     // 3. AsyncValueTensor, containing a PjRtBuffer. This is the legacy mode
     // and certain device type (e.g. TPU) still uses this path.
@@ -962,8 +1013,22 @@ absl::Status RunPjRtExecutable(
     core::ScopedUnref device_selector_resource_ref(device_selector_resource);
 
     TF_ASSIGN_OR_RETURN(absl::string_view fingerprint,
+      parameter_inputs_time_us += env->NowMicros() - branch_start_time;
                         executable->FingerprintExecutable());
     device_selector_resource->selector()->Enqueue(pjrt_device_id, fingerprint);
+
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup,
+      setup_end_time - build_start_time);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputs,
+      constant_inputs_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputs,
+      parameter_inputs_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsResourceInputs,
+      resource_inputs_time_us);
   }
   TF_ASSIGN_OR_RETURN(
       std::vector<std::unique_ptr<xla::PjRtBuffer>> execute_outputs,

@@ -38,6 +38,10 @@ class DeviceCompilationProfiler : public ResourceBase {
     kGetVariableInfosFromInputs,
     kLockVariables,
     kSnapshotResourceVariables,
+    kBuildXlaCompilerArgumentsSetup,
+    kBuildXlaCompilerArgumentsConstantInputs,
+    kBuildXlaCompilerArgumentsParameterInputs,
+    kBuildXlaCompilerArgumentsResourceInputs,
     kBuildXlaCompilerArguments,
     kGetXlaCompilerArgsAndSnapshotVariables,
     kCompileToLocalExecutable,
@@ -84,6 +88,10 @@ class DeviceCompilationProfiler : public ResourceBase {
     PhaseTimingStats get_variable_infos_from_inputs;
     PhaseTimingStats lock_variables;
     PhaseTimingStats snapshot_resource_variables;
+    PhaseTimingStats build_xla_compiler_arguments_setup;
+    PhaseTimingStats build_xla_compiler_arguments_constant_inputs;
+    PhaseTimingStats build_xla_compiler_arguments_parameter_inputs;
+    PhaseTimingStats build_xla_compiler_arguments_resource_inputs;
     PhaseTimingStats build_xla_compiler_arguments;
     PhaseTimingStats get_xla_compiler_args_and_snapshot_variables;
     PhaseTimingStats compile_to_local_executable;
@@ -105,6 +113,18 @@ class DeviceCompilationProfiler : public ResourceBase {
         ", ",
         snapshot_resource_variables.DebugString(
             "snapshot_resource_variables"),
+        ", ",
+        build_xla_compiler_arguments_setup.DebugString(
+          "build_xla_compiler_arguments_setup"),
+        ", ",
+        build_xla_compiler_arguments_constant_inputs.DebugString(
+          "build_xla_compiler_arguments_constant_inputs"),
+        ", ",
+        build_xla_compiler_arguments_parameter_inputs.DebugString(
+          "build_xla_compiler_arguments_parameter_inputs"),
+        ", ",
+        build_xla_compiler_arguments_resource_inputs.DebugString(
+          "build_xla_compiler_arguments_resource_inputs"),
         ", ",
         build_xla_compiler_arguments.DebugString(
             "build_xla_compiler_arguments"),
