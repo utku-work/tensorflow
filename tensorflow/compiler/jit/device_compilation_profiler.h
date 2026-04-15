@@ -35,6 +35,10 @@ class DeviceCompilationProfiler : public ResourceBase {
   enum class CompilePhase {
     kSignatureBuild,
     kCacheLookup,
+    kGetVariableInfosFromInputs,
+    kLockVariables,
+    kSnapshotResourceVariables,
+    kBuildXlaCompilerArguments,
     kGetXlaCompilerArgsAndSnapshotVariables,
     kCompileToLocalExecutable,
     kXlaCompileOpCompute,
@@ -77,6 +81,10 @@ class DeviceCompilationProfiler : public ResourceBase {
     // cluster.
     PhaseTimingStats signature_build;
     PhaseTimingStats cache_lookup;
+    PhaseTimingStats get_variable_infos_from_inputs;
+    PhaseTimingStats lock_variables;
+    PhaseTimingStats snapshot_resource_variables;
+    PhaseTimingStats build_xla_compiler_arguments;
     PhaseTimingStats get_xla_compiler_args_and_snapshot_variables;
     PhaseTimingStats compile_to_local_executable;
     PhaseTimingStats xla_compile_op_compute;
@@ -90,11 +98,22 @@ class DeviceCompilationProfiler : public ResourceBase {
         ", is_megamorphic=", is_megamorphic, ", ",
         signature_build.DebugString("signature_build"), ", ",
         cache_lookup.DebugString("cache_lookup"), ", ",
+        get_variable_infos_from_inputs.DebugString(
+            "get_variable_infos_from_inputs"),
+        ", ",
+        lock_variables.DebugString("lock_variables"),
+        ", ",
+        snapshot_resource_variables.DebugString(
+            "snapshot_resource_variables"),
+        ", ",
+        build_xla_compiler_arguments.DebugString(
+            "build_xla_compiler_arguments"),
+        ", ",
         get_xla_compiler_args_and_snapshot_variables.DebugString(
-          "get_xla_compiler_args_and_snapshot_variables"),
+            "get_xla_compiler_args_and_snapshot_variables"),
         ", ",
         compile_to_local_executable.DebugString(
-          "compile_to_local_executable"),
+            "compile_to_local_executable"),
         ", ",
         xla_compile_op_compute.DebugString("xla_compile_op_compute"),
         "}");

@@ -391,22 +391,43 @@ absl::StatusOr<
 GetXlaCompilerArgsAndSnapshotVariables(
     absl::Span<const int> variable_indices,
     absl::Span<const int> must_be_constant_idxs,
-    absl::Span<const Tensor* const> inputs, OpKernelContext* ctx) {
+  absl::Span<const Tensor* const> inputs, OpKernelContext* ctx,
+  const NameAttrList& function, DeviceCompilationProfiler* profiler) {
+  Env* env = Env::Default();
   std::pair<std::vector<XlaCompiler::Argument>, ResourceVarsSnapshot> result;
 
+  auto get_variable_infos_start_time = env->NowMicros();
   std::vector<VariableInfo> variable_infos;
   TF_RETURN_IF_ERROR(
       GetVariableInfosFromInputs(ctx->resource_manager(), ctx->device(), inputs,
                                  variable_indices, &variable_infos));
-  TF_RETURN_IF_ERROR(LockVariables(absl::MakeSpan(variable_infos)));
+  profiler->RegisterPhaseTiming(
+    function, DeviceCompilationProfiler::CompilePhase::kGetVariableInfosFromInputs,
+    env->NowMicros() - get_variable_infos_start_time);
 
+  auto lock_variables_start_time = env->NowMicros();
+  TF_RETURN_IF_ERROR(LockVariables(absl::MakeSpan(variable_infos)));
+  profiler->RegisterPhaseTiming(
+    function, DeviceCompilationProfiler::CompilePhase::kLockVariables,
+    env->NowMicros() - lock_variables_start_time);
+
+  auto snapshot_resource_variables_start_time = env->NowMicros();
   TF_RETURN_IF_ERROR(SnapshotResourceVariables(ctx, variable_indices,
                                                variable_infos, &result.second));
+  profiler->RegisterPhaseTiming(
+    function,
+    DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables,
+    env->NowMicros() - snapshot_resource_variables_start_time);
 
+  auto build_xla_compiler_arguments_start_time = env->NowMicros();
   TF_ASSIGN_OR_RETURN(result.first,
                       XlaComputationLaunchContext::BuildXlaCompilerArguments(
                           must_be_constant_idxs, inputs, variable_infos,
                           static_cast<Device*>(ctx->device())));
+  profiler->RegisterPhaseTiming(
+    function,
+    DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArguments,
+    env->NowMicros() - build_xla_compiler_arguments_start_time);
   return result;
 }
 
@@ -1106,7 +1127,7 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
   } else {
     auto StartTimeGetXlaCompilerArgsAndSnapshotVariables = env->NowMicros();
     auto args_and_variables_snapshot = GetXlaCompilerArgsAndSnapshotVariables(
-        resources_, constants_, inputs, ctx);
+        resources_, constants_, inputs, ctx, function_, profiler);
     auto EndTimeGetXlaCompilerArgsAndSnapshotVariables = env->NowMicros();
     profiler->RegisterPhaseTiming(
       function_,

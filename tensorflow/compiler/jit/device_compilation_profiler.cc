@@ -113,6 +113,14 @@ DeviceCompilationProfiler::PhaseTimingStats* GetPhaseTimingStats(
       return &stats->signature_build;
     case DeviceCompilationProfiler::CompilePhase::kCacheLookup:
       return &stats->cache_lookup;
+    case DeviceCompilationProfiler::CompilePhase::kGetVariableInfosFromInputs:
+      return &stats->get_variable_infos_from_inputs;
+    case DeviceCompilationProfiler::CompilePhase::kLockVariables:
+      return &stats->lock_variables;
+    case DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables:
+      return &stats->snapshot_resource_variables;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArguments:
+      return &stats->build_xla_compiler_arguments;
     case DeviceCompilationProfiler::CompilePhase::kGetXlaCompilerArgsAndSnapshotVariables:
       return &stats->get_xla_compiler_args_and_snapshot_variables;
     case DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable:
@@ -130,6 +138,14 @@ const char* GetPhaseName(DeviceCompilationProfiler::CompilePhase phase) {
       return "signature_build";
     case DeviceCompilationProfiler::CompilePhase::kCacheLookup:
       return "cache_lookup";
+    case DeviceCompilationProfiler::CompilePhase::kGetVariableInfosFromInputs:
+      return "get_variable_infos_from_inputs";
+    case DeviceCompilationProfiler::CompilePhase::kLockVariables:
+      return "lock_variables";
+    case DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables:
+      return "snapshot_resource_variables";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArguments:
+      return "build_xla_compiler_arguments";
     case DeviceCompilationProfiler::CompilePhase::kGetXlaCompilerArgsAndSnapshotVariables:
       return "get_xla_compiler_args_and_snapshot_variables";
     case DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable:
@@ -209,12 +225,12 @@ void DeviceCompilationProfiler::RegisterPhaseTiming(
     PhaseTimingStats* phase_stats = GetPhaseTimingStats(&stats, phase);
     ++phase_stats->sample_count;
     phase_stats->cumulative_time_us += elapsed_time_us;
-  stats.phase_timing_records.push_back(PhaseTimingRecord{
-    phase,
-    static_cast<int64_t>(stats.phase_timing_records.size()) + 1,
-    phase_stats->sample_count,
-    elapsed_time_us,
-  });
+    stats.phase_timing_records.push_back(PhaseTimingRecord{
+        phase,
+        static_cast<int64_t>(stats.phase_timing_records.size()) + 1,
+        phase_stats->sample_count,
+        elapsed_time_us,
+    });
   }
 
   if (const char* csv_path = GetCsvDumpPathFromEnv()) {
