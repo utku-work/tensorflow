@@ -42,7 +42,11 @@ class DeviceCompilationProfiler : public ResourceBase {
     kBuildXlaCompilerArgumentsPrepareOutputVector,
     kBuildXlaCompilerArgumentsPrepareVariableLookup,
     kBuildXlaCompilerArgumentsSetup,
+    kBuildXlaCompilerArgumentsConstantInputsCreateArgument,
+    kBuildXlaCompilerArgumentsConstantInputsPopulateArgument,
     kBuildXlaCompilerArgumentsConstantInputs,
+    kBuildXlaCompilerArgumentsParameterInputsCreateArgument,
+    kBuildXlaCompilerArgumentsParameterInputsPopulateArgument,
     kBuildXlaCompilerArgumentsParameterInputs,
     kBuildXlaCompilerArgumentsResourceInputs,
     kBuildXlaCompilerArguments,
@@ -95,7 +99,11 @@ class DeviceCompilationProfiler : public ResourceBase {
     PhaseTimingStats build_xla_compiler_arguments_prepare_output_vector;
     PhaseTimingStats build_xla_compiler_arguments_prepare_variable_lookup;
     PhaseTimingStats build_xla_compiler_arguments_setup;
+    PhaseTimingStats build_xla_compiler_arguments_constant_inputs_create_argument;
+    PhaseTimingStats build_xla_compiler_arguments_constant_inputs_populate_argument;
     PhaseTimingStats build_xla_compiler_arguments_constant_inputs;
+    PhaseTimingStats build_xla_compiler_arguments_parameter_inputs_create_argument;
+    PhaseTimingStats build_xla_compiler_arguments_parameter_inputs_populate_argument;
     PhaseTimingStats build_xla_compiler_arguments_parameter_inputs;
     PhaseTimingStats build_xla_compiler_arguments_resource_inputs;
     PhaseTimingStats build_xla_compiler_arguments;
@@ -132,8 +140,24 @@ class DeviceCompilationProfiler : public ResourceBase {
         build_xla_compiler_arguments_setup.DebugString(
           "build_xla_compiler_arguments_setup"),
         ", ",
+        build_xla_compiler_arguments_constant_inputs_create_argument
+            .DebugString(
+                "build_xla_compiler_arguments_constant_inputs_create_argument"),
+        ", ",
+        build_xla_compiler_arguments_constant_inputs_populate_argument
+            .DebugString(
+                "build_xla_compiler_arguments_constant_inputs_populate_argument"),
+        ", ",
         build_xla_compiler_arguments_constant_inputs.DebugString(
           "build_xla_compiler_arguments_constant_inputs"),
+        ", ",
+        build_xla_compiler_arguments_parameter_inputs_create_argument
+            .DebugString(
+                "build_xla_compiler_arguments_parameter_inputs_create_argument"),
+        ", ",
+        build_xla_compiler_arguments_parameter_inputs_populate_argument
+            .DebugString(
+                "build_xla_compiler_arguments_parameter_inputs_populate_argument"),
         ", ",
         build_xla_compiler_arguments_parameter_inputs.DebugString(
           "build_xla_compiler_arguments_parameter_inputs"),

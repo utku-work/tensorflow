@@ -127,8 +127,16 @@ DeviceCompilationProfiler::PhaseTimingStats* GetPhaseTimingStats(
       return &stats->build_xla_compiler_arguments_prepare_variable_lookup;
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup:
       return &stats->build_xla_compiler_arguments_setup;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputsCreateArgument:
+      return &stats->build_xla_compiler_arguments_constant_inputs_create_argument;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputsPopulateArgument:
+      return &stats->build_xla_compiler_arguments_constant_inputs_populate_argument;
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputs:
       return &stats->build_xla_compiler_arguments_constant_inputs;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputsCreateArgument:
+      return &stats->build_xla_compiler_arguments_parameter_inputs_create_argument;
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputsPopulateArgument:
+      return &stats->build_xla_compiler_arguments_parameter_inputs_populate_argument;
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputs:
       return &stats->build_xla_compiler_arguments_parameter_inputs;
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsResourceInputs:
@@ -166,8 +174,16 @@ const char* GetPhaseName(DeviceCompilationProfiler::CompilePhase phase) {
       return "build_xla_compiler_arguments_prepare_variable_lookup";
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup:
       return "build_xla_compiler_arguments_setup";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputsCreateArgument:
+      return "build_xla_compiler_arguments_constant_inputs_create_argument";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputsPopulateArgument:
+      return "build_xla_compiler_arguments_constant_inputs_populate_argument";
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsConstantInputs:
       return "build_xla_compiler_arguments_constant_inputs";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputsCreateArgument:
+      return "build_xla_compiler_arguments_parameter_inputs_create_argument";
+    case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputsPopulateArgument:
+      return "build_xla_compiler_arguments_parameter_inputs_populate_argument";
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsParameterInputs:
       return "build_xla_compiler_arguments_parameter_inputs";
     case DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsResourceInputs:
