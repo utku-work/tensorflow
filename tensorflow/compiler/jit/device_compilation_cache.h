@@ -84,6 +84,10 @@ class DeviceCompilationCache {
   // is found, `request_count` is incremented before returning the value.
   std::optional<Value> Lookup(const Key& key) const;
 
+  // Returns std::nullopt if value for the supplied key is not found. If a value
+  // is found, it is returned without incrementing `request_count`.
+  std::optional<Value> Peek(const Key& key) const;
+
   // Inserts an empty value if value is not found and returns it. If a value is
   // found, `request_count` is incremented before returning the value.
   Value LookupOrCreate(const Key& key);
@@ -196,6 +200,29 @@ DeviceCompilationCache<ExecutableType>::Lookup(const Key& key) const {
   Value value = {/*compile_state=*/entry->compile_state,
                  /*compilation_status=*/entry->compilation_status,
                  /*request_count=*/++entry->request_count,
+                 /*compilation_result=*/entry->compilation_result.get(),
+                 /*executable=*/entry->executable.get()};
+  return value;
+}
+
+template <typename ExecutableType>
+std::optional<typename DeviceCompilationCache<ExecutableType>::Value>
+DeviceCompilationCache<ExecutableType>::Peek(const Key& key) const {
+  Entry* entry;
+  {
+    mutex_lock lock(compile_cache_mu_);
+    auto it = cache_.find(key);
+    if (it == cache_.cend()) {
+      return std::nullopt;
+    }
+
+    entry = it->second.get();
+  }
+
+  mutex_lock lock(entry->mu);
+  Value value = {/*compile_state=*/entry->compile_state,
+                 /*compilation_status=*/entry->compilation_status,
+                 /*request_count=*/entry->request_count,
                  /*compilation_result=*/entry->compilation_result.get(),
                  /*executable=*/entry->executable.get()};
   return value;

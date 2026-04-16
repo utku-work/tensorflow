@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tensorflow/compiler/jit/device_compilation_cluster_signature.h"
 #include "tensorflow/compiler/jit/device_compilation_profiler.h"
 #include "tensorflow/compiler/jit/device_compiler.h"
 #include "tensorflow/compiler/jit/encapsulate_subgraphs_pass.h"
@@ -133,6 +134,75 @@ absl::StatusOr<DeviceCompilationProfiler*> GetOrCreateCompilationProfiler(
         return absl::OkStatus();
       }));
   return profiler;
+}
+
+absl::StatusOr<bool> TryUseCompiledLocalExecutableCacheHit(
+    OpKernelContext* ctx, const NameAttrList& function,
+    const XlaPlatformInfo& platform_info,
+    absl::Span<const int> must_be_constant_idxs,
+    absl::Span<const Tensor* const> inputs, DeviceCompilationProfiler* profiler,
+    xla::LocalClient** client,
+    const XlaCompiler::CompilationResult** compilation_result,
+    xla::LocalExecutable** executable) {
+  Env* env = Env::Default();
+  const int64_t fast_path_start_time_us = env->NowMicros();
+
+  ResourceMgr* rm = ctx->resource_manager();
+  if (rm == nullptr) {
+    return absl::InternalError("No resource manager.");
+  }
+
+  const int64_t signature_build_start_time_us = env->NowMicros();
+  TF_ASSIGN_OR_RETURN(
+      DeviceCompilationClusterSignature signature,
+      DeviceCompilationClusterSignature::BuildForNoResourceInputs(
+          function, inputs, must_be_constant_idxs));
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild,
+      env->NowMicros() - signature_build_start_time_us);
+
+  TF_ASSIGN_OR_RETURN(DeviceType compilation_device_type,
+                      GetCompilationDeviceType(platform_info.device_type()));
+
+  XlaDeviceCompiler* xla_device_compiler;
+  TF_RETURN_IF_ERROR(rm->LookupOrCreate<XlaDeviceCompiler>(
+      rm->default_container(), "xla_device_compiler", &xla_device_compiler,
+      [&](XlaDeviceCompiler** xla_device_compiler) {
+        return BuildXlaDeviceCompiler(ctx->device(), ctx->function_library(),
+                                      platform_info, compilation_device_type,
+                                      xla_device_compiler);
+      }));
+  core::ScopedUnref xla_device_compiler_ref(xla_device_compiler);
+
+  *client = static_cast<xla::LocalClient*>(xla_device_compiler->client());
+
+  const int64_t cache_lookup_start_time_us = env->NowMicros();
+  auto cache_value = xla_device_compiler->cache()->Peek(signature);
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kCacheLookup,
+      env->NowMicros() - cache_lookup_start_time_us);
+
+  if (!cache_value.has_value() ||
+      cache_value->compile_state != DeviceCompileState::kCompiled) {
+    return false;
+  }
+
+  TF_RETURN_IF_ERROR(cache_value->compilation_status);
+  *compilation_result = cache_value->compilation_result;
+  *executable = cache_value->executable;
+  profiler->RegisterExecution(function);
+
+  const int64_t fast_path_elapsed_time_us =
+      env->NowMicros() - fast_path_start_time_us;
+  profiler->RegisterPhaseTiming(
+      function,
+      DeviceCompilationProfiler::CompilePhase::kLocalExecutableCacheHitFastPath,
+      fast_path_elapsed_time_us);
+  profiler->RegisterPhaseTiming(
+      function,
+      DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable,
+      fast_path_elapsed_time_us);
+  return true;
 }
 
 // A closure describing how to run a compiled version of a TensorFlow function.
@@ -1126,39 +1196,54 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
       cannot_compile_cluster) {
     executable = nullptr;
   } else {
-    const int64_t get_args_and_snapshot_start_time_us = env->NowMicros();
-    auto args_and_variables_snapshot = GetXlaCompilerArgsAndSnapshotVariables(
-      resources_, constants_, inputs, ctx, function_, profiler);
-    profiler->RegisterPhaseTiming(
-      function_,
-      DeviceCompilationProfiler::CompilePhase::
-        kGetXlaCompilerArgsAndSnapshotVariables,
-      env->NowMicros() - get_args_and_snapshot_start_time_us);
-    OP_REQUIRES_OK(ctx, args_and_variables_snapshot.status());
-    const std::vector<XlaCompiler::Argument>& args =
-        args_and_variables_snapshot->first;
-    variables_snapshot = std::move(args_and_variables_snapshot->second);
+    absl::Status status = absl::OkStatus();
+    bool used_compiled_cache_hit_fast_path = false;
+    if (!use_pjrt && resources_.empty()) {
+      auto compiled_cache_hit_or = TryUseCompiledLocalExecutableCacheHit(
+          ctx, function_, platform_info_, constants_, inputs, profiler, &client,
+          &kernel, &executable);
+      OP_REQUIRES_OK(ctx, compiled_cache_hit_or.status());
+      used_compiled_cache_hit_fast_path = *compiled_cache_hit_or;
+    }
 
-    // Do not alias resource updates as locking variables in XlaCompile and
-    // unlocking them in XlaRun may lead to deadlocks.
-    absl::Status status;
-    if (use_pjrt) {
-      VLOG(2) << "Using PJRT for compilation. Function name: "
-              << function_.name();
-      status = CompileToPjRtLoadedExecutable(
-          *ctx, platform_info_, function_, args, compile_mode, has_ref_vars_,
-          /*may_alias_resource_update=*/false, &kernel, &pjrt_client,
-          &pjrt_executable);
+    if (used_compiled_cache_hit_fast_path) {
+      variables_snapshot.clear();
     } else {
-        const int64_t compile_to_local_executable_start_time_us =
-          env->NowMicros();
-      status = CompileToLocalExecutable(
-          ctx, function_, has_ref_vars_, platform_info_, args, compile_mode,
-          /*may_alias_resource_update=*/false, &client, &kernel, &executable);
-        profiler->RegisterPhaseTiming(
+      const int64_t get_args_and_snapshot_start_time_us = env->NowMicros();
+      auto args_and_variables_snapshot =
+          GetXlaCompilerArgsAndSnapshotVariables(resources_, constants_, inputs,
+                                                ctx, function_, profiler);
+      profiler->RegisterPhaseTiming(
           function_,
-          DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable,
-          env->NowMicros() - compile_to_local_executable_start_time_us);
+          DeviceCompilationProfiler::CompilePhase::
+              kGetXlaCompilerArgsAndSnapshotVariables,
+          env->NowMicros() - get_args_and_snapshot_start_time_us);
+      OP_REQUIRES_OK(ctx, args_and_variables_snapshot.status());
+      const std::vector<XlaCompiler::Argument>& args =
+          args_and_variables_snapshot->first;
+      variables_snapshot = std::move(args_and_variables_snapshot->second);
+
+      // Do not alias resource updates as locking variables in XlaCompile and
+      // unlocking them in XlaRun may lead to deadlocks.
+      if (use_pjrt) {
+        VLOG(2) << "Using PJRT for compilation. Function name: "
+                << function_.name();
+        status = CompileToPjRtLoadedExecutable(
+            *ctx, platform_info_, function_, args, compile_mode, has_ref_vars_,
+            /*may_alias_resource_update=*/false, &kernel, &pjrt_client,
+            &pjrt_executable);
+      } else {
+        const int64_t compile_to_local_executable_start_time_us =
+            env->NowMicros();
+        status = CompileToLocalExecutable(
+            ctx, function_, has_ref_vars_, platform_info_, args, compile_mode,
+            /*may_alias_resource_update=*/false, &client, &kernel,
+            &executable);
+        profiler->RegisterPhaseTiming(
+            function_,
+            DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable,
+            env->NowMicros() - compile_to_local_executable_start_time_us);
+      }
     }
 
     if (compile_mode != DeviceCompileMode::kLazy ||

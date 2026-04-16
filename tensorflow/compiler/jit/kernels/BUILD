@@ -51,6 +51,7 @@ cc_library(
     hdrs = ["xla_ops.h"],
     deps = XLA_OPS_DEPS + [
         "//tensorflow/compiler/jit:device_compilation_cache",
+        "//tensorflow/compiler/jit:device_compilation_cluster_signature",
         "//tensorflow/compiler/jit:device_compilation_profiler",
         "//tensorflow/compiler/jit:pjrt_compile_util",
         "//tensorflow/compiler/jit:tf_graph_to_hlo_compiler",

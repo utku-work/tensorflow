@@ -160,6 +160,8 @@ DeviceCompilationProfiler::PhaseTimingStats* GetPhaseTimingStats(
     case DeviceCompilationProfiler::CompilePhase::
         kGetXlaCompilerArgsAndSnapshotVariables:
       return &stats->get_xla_compiler_args_and_snapshot_variables;
+    case DeviceCompilationProfiler::CompilePhase::kLocalExecutableCacheHitFastPath:
+      return &stats->local_executable_cache_hit_fast_path;
     case DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable:
       return &stats->compile_to_local_executable;
     case DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute:
@@ -220,6 +222,8 @@ const char* GetPhaseName(DeviceCompilationProfiler::CompilePhase phase) {
     case DeviceCompilationProfiler::CompilePhase::
         kGetXlaCompilerArgsAndSnapshotVariables:
       return "get_xla_compiler_args_and_snapshot_variables";
+    case DeviceCompilationProfiler::CompilePhase::kLocalExecutableCacheHitFastPath:
+      return "local_executable_cache_hit_fast_path";
     case DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable:
       return "compile_to_local_executable";
     case DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute:
