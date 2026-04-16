@@ -1657,7 +1657,9 @@ cc_library(
     deps = [
         "//tensorflow/compiler/tf2xla:xla_compiler",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/types:span",
+        "//tensorflow/core/platform:errors",
     ],
 )
 
