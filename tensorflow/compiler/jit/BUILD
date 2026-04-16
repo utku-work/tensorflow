@@ -1654,7 +1654,11 @@ cc_library(
     name = "device_compilation_cluster_signature",
     srcs = ["device_compilation_cluster_signature.cc"],
     hdrs = ["device_compilation_cluster_signature.h"],
-    deps = ["//tensorflow/compiler/tf2xla:xla_compiler"],
+    deps = [
+        "//tensorflow/compiler/tf2xla:xla_compiler",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/types:span",
+    ],
 )
 
 cc_library(
