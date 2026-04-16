@@ -15,7 +15,9 @@ limitations under the License.
 
 #include "tensorflow/compiler/jit/device_compilation_profiler.h"
 
+#include <cstdlib>
 #include <memory>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -24,6 +26,7 @@ limitations under the License.
 #include "tensorflow/compiler/jit/tests/device_compiler_test_helper.h"
 #include "tensorflow/compiler/jit/xla_activity.pb.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
+#include "tensorflow/core/platform/env.h"
 
 namespace tensorflow {
 namespace {
@@ -103,6 +106,116 @@ TEST(DeviceCompilationProfilerTest, OngoingAsyncCompilations) {
   }
 
   EXPECT_EQ(profiler->GetNumOngoingAsyncCompilations(), 0);
+}
+
+TEST(DeviceCompilationProfilerTest, RegisterPhaseTiming) {
+  // Phase timing samples should accumulate independently from compile counts.
+  DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();
+  core::ScopedUnref profiler_ref(profiler);
+
+  NameAttrList function;
+  function.set_name("TestFunc");
+
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 7);
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 3);
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kCacheLookup, 5);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto stats, profiler->GetCompileStats(function));
+  EXPECT_EQ(stats.signature_build.sample_count, 2);
+  EXPECT_EQ(stats.signature_build.cumulative_time_us, 10);
+  EXPECT_EQ(stats.cache_lookup.sample_count, 1);
+  EXPECT_EQ(stats.cache_lookup.cumulative_time_us, 5);
+}
+
+TEST(DeviceCompilationProfilerTest, DumpCsv) {
+  // DumpCsv should write one row per recorded phase sample.
+  DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();
+  core::ScopedUnref profiler_ref(profiler);
+
+  NameAttrList function;
+  function.set_name("TestFunc");
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 7);
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kCacheLookup, 5);
+
+  Env* env = Env::Default();
+  std::string filename;
+  ASSERT_TRUE(env->LocalTempFilename(&filename));
+
+  TF_ASSERT_OK(profiler->DumpCsv(filename));
+
+  std::string contents;
+  TF_ASSERT_OK(ReadFileToString(env, filename, &contents));
+  EXPECT_NE(contents.find("cluster_name,phase,event_index"),
+            std::string::npos);
+  EXPECT_NE(contents.find(
+                "\"TestFunc\",signature_build,1,1,7\n\"TestFunc\",cache_lookup,2,1,5"),
+            std::string::npos);
+}
+
+TEST(DeviceCompilationProfilerTest, DumpsCsvOnDestructionWhenEnvVarIsSet) {
+  // The destructor should dump the same CSV snapshot when the env var is set.
+  Env* env = Env::Default();
+  std::string filename;
+  ASSERT_TRUE(env->LocalTempFilename(&filename));
+  ASSERT_EQ(::setenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH",
+                     filename.c_str(), 1),
+            0);
+
+  {
+    DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();
+    core::ScopedUnref profiler_ref(profiler);
+
+    NameAttrList function;
+    function.set_name("TestFunc");
+    profiler->RegisterPhaseTiming(
+        function, DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute,
+        11);
+  }
+
+  std::string contents;
+  TF_ASSERT_OK(ReadFileToString(env, filename, &contents));
+  EXPECT_NE(contents.find("\"TestFunc\",xla_compile_op_compute,1,1,11"),
+            std::string::npos);
+  ASSERT_EQ(::unsetenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH"), 0);
+}
+
+TEST(DeviceCompilationProfilerTest, UpdatesCsvWhenCompileOpTimingIsRecorded) {
+  // Writing once per completed compile-op sample keeps earlier phase samples visible.
+  Env* env = Env::Default();
+  std::string filename;
+  ASSERT_TRUE(env->LocalTempFilename(&filename));
+  ASSERT_EQ(::setenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH",
+                     filename.c_str(), 1),
+            0);
+
+  DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();
+  core::ScopedUnref profiler_ref(profiler);
+
+  NameAttrList function;
+  function.set_name("TestFunc");
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 9);
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 4);
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute,
+      13);
+
+  std::string contents;
+  TF_ASSERT_OK(ReadFileToString(env, filename, &contents));
+  EXPECT_NE(contents.find("\"TestFunc\",signature_build,1,1,9"),
+            std::string::npos);
+  EXPECT_NE(contents.find("\"TestFunc\",signature_build,2,2,4"),
+            std::string::npos);
+  EXPECT_NE(contents.find("\"TestFunc\",xla_compile_op_compute,3,1,13"),
+            std::string::npos);
+
+  ASSERT_EQ(::unsetenv("TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH"), 0);
 }
 
 TEST(DeviceCompilationProfilerTest, ShouldCompileClusterNotFound) {

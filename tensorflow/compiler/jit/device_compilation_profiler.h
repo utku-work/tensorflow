@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "tensorflow/compiler/jit/xla_compile_util.h"
 #include "tensorflow/core/framework/attr_value.pb.h"
@@ -30,6 +31,47 @@ class DeviceCompilationProfiler : public ResourceBase {
  public:
   DeviceCompilationProfiler() = default;
   ~DeviceCompilationProfiler() override;
+
+  enum class CompilePhase {
+    kSignatureBuild,
+    kCacheLookup,
+    kGetVariableInfosFromInputs,
+    kLockVariables,
+    kSnapshotResourceVariables,
+    kBuildXlaCompilerArgumentsPrepareConstantIndices,
+    kBuildXlaCompilerArgumentsPrepareOutputVector,
+    kBuildXlaCompilerArgumentsPrepareVariableLookup,
+    kBuildXlaCompilerArgumentsSetup,
+    kBuildXlaCompilerArgumentsConstantInputsCreateArgument,
+    kBuildXlaCompilerArgumentsConstantInputsPopulateArgument,
+    kBuildXlaCompilerArgumentsConstantInputs,
+    kBuildXlaCompilerArgumentsParameterInputsCreateArgument,
+    kBuildXlaCompilerArgumentsParameterInputsPopulateArgument,
+    kBuildXlaCompilerArgumentsParameterInputs,
+    kBuildXlaCompilerArgumentsResourceInputs,
+    kBuildXlaCompilerArguments,
+    kGetXlaCompilerArgsAndSnapshotVariables,
+    kCompileToLocalExecutable,
+    kXlaCompileOpCompute,
+  };
+
+  struct PhaseTimingStats {
+    int64_t sample_count = 0;
+    int64_t cumulative_time_us = 0;
+
+    std::string DebugString(const char* phase_name) const {
+      return absl::StrCat(phase_name, "={sample_count=", sample_count,
+                          ", cumulative_time_us=", cumulative_time_us,
+                          "}");
+    }
+  };
+
+  struct PhaseTimingRecord {
+    CompilePhase phase;
+    int64_t event_index = 0;
+    int64_t phase_sample_index = 0;
+    int64_t elapsed_time_us = 0;
+  };
 
   struct ClusterCompileStats {
     // Number of times the cluster has been (re-)compiled.
@@ -46,12 +88,91 @@ class DeviceCompilationProfiler : public ResourceBase {
     // tagged megamorphic, it stays megamorphic forever.
     bool is_megamorphic = false;
 
+    // Aggregated phase timings recorded while preparing or compiling the
+    // cluster.
+    PhaseTimingStats signature_build;
+    PhaseTimingStats cache_lookup;
+    PhaseTimingStats get_variable_infos_from_inputs;
+    PhaseTimingStats lock_variables;
+    PhaseTimingStats snapshot_resource_variables;
+    PhaseTimingStats build_xla_compiler_arguments_prepare_constant_indices;
+    PhaseTimingStats build_xla_compiler_arguments_prepare_output_vector;
+    PhaseTimingStats build_xla_compiler_arguments_prepare_variable_lookup;
+    PhaseTimingStats build_xla_compiler_arguments_setup;
+    PhaseTimingStats build_xla_compiler_arguments_constant_inputs_create_argument;
+    PhaseTimingStats build_xla_compiler_arguments_constant_inputs_populate_argument;
+    PhaseTimingStats build_xla_compiler_arguments_constant_inputs;
+    PhaseTimingStats build_xla_compiler_arguments_parameter_inputs_create_argument;
+    PhaseTimingStats build_xla_compiler_arguments_parameter_inputs_populate_argument;
+    PhaseTimingStats build_xla_compiler_arguments_parameter_inputs;
+    PhaseTimingStats build_xla_compiler_arguments_resource_inputs;
+    PhaseTimingStats build_xla_compiler_arguments;
+    PhaseTimingStats get_xla_compiler_args_and_snapshot_variables;
+    PhaseTimingStats compile_to_local_executable;
+    PhaseTimingStats xla_compile_op_compute;
+    std::vector<PhaseTimingRecord> phase_timing_records;
+
     std::string DebugString() const {
       return absl::StrCat(
           "DeviceCompilationProfiler::ClusterCompileStats {compile_count=",
           compile_count, ", execution_count=", execution_count,
           ", cumulative_compile_time_us=", cumulative_compile_time_us,
-          ", is_megamorphic=", is_megamorphic, "}");
+        ", is_megamorphic=", is_megamorphic, ", ",
+        signature_build.DebugString("signature_build"), ", ",
+        cache_lookup.DebugString("cache_lookup"), ", ",
+        get_variable_infos_from_inputs.DebugString(
+          "get_variable_infos_from_inputs"),
+        ", ", lock_variables.DebugString("lock_variables"), ", ",
+        snapshot_resource_variables.DebugString(
+          "snapshot_resource_variables"),
+        ", ",
+        build_xla_compiler_arguments_prepare_constant_indices.DebugString(
+          "build_xla_compiler_arguments_prepare_constant_indices"),
+        ", ",
+          build_xla_compiler_arguments_prepare_output_vector.DebugString(
+          "build_xla_compiler_arguments_prepare_output_vector"),
+        ", ",
+        build_xla_compiler_arguments_prepare_variable_lookup.DebugString(
+          "build_xla_compiler_arguments_prepare_variable_lookup"),
+        ", ",
+        build_xla_compiler_arguments_setup.DebugString(
+          "build_xla_compiler_arguments_setup"),
+        ", ",
+        build_xla_compiler_arguments_constant_inputs_create_argument
+          .DebugString(
+            "build_xla_compiler_arguments_constant_inputs_create_argument"),
+        ", ",
+        build_xla_compiler_arguments_constant_inputs_populate_argument
+          .DebugString(
+            "build_xla_compiler_arguments_constant_inputs_populate_argument"),
+        ", ",
+        build_xla_compiler_arguments_constant_inputs.DebugString(
+          "build_xla_compiler_arguments_constant_inputs"),
+        ", ",
+        build_xla_compiler_arguments_parameter_inputs_create_argument
+          .DebugString(
+            "build_xla_compiler_arguments_parameter_inputs_create_argument"),
+        ", ",
+        build_xla_compiler_arguments_parameter_inputs_populate_argument
+          .DebugString(
+            "build_xla_compiler_arguments_parameter_inputs_populate_argument"),
+        ", ",
+        build_xla_compiler_arguments_parameter_inputs.DebugString(
+          "build_xla_compiler_arguments_parameter_inputs"),
+        ", ",
+        build_xla_compiler_arguments_resource_inputs.DebugString(
+          "build_xla_compiler_arguments_resource_inputs"),
+        ", ",
+        build_xla_compiler_arguments.DebugString(
+          "build_xla_compiler_arguments"),
+        ", ",
+        get_xla_compiler_args_and_snapshot_variables.DebugString(
+          "get_xla_compiler_args_and_snapshot_variables"),
+        ", ",
+        compile_to_local_executable.DebugString(
+          "compile_to_local_executable"),
+        ", ",
+        xla_compile_op_compute.DebugString("xla_compile_op_compute"), "}");
     }
   };
 
@@ -71,12 +192,19 @@ class DeviceCompilationProfiler : public ResourceBase {
   // sets the megamorphic bit accordingly).
   void RegisterExecution(const NameAttrList& function);
 
+  // Registers a sampled timing for one phase of cluster compilation.
+  void RegisterPhaseTiming(const NameAttrList& function, CompilePhase phase,
+                           int64_t elapsed_time_us);
+
   // Registers a cluster compilation. Increments the compilation count and
   // accumulates the compile time for the given cluster. Also broadcasts an
   // XlaJitCompilationActivity.
   virtual absl::Status RegisterCompilation(const NameAttrList& function,
                                            int64_t compile_time_us,
                                            bool used_persistent_cache);
+
+  // Dumps the currently aggregated per-cluster timing records as CSV.
+  absl::Status DumpCsv(const std::string& path) const;
 
   void IncrementOngoingAsyncCompilations();
   void DecrementOngoingAsyncCompilations();

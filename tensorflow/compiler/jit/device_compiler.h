@@ -42,6 +42,7 @@ limitations under the License.
 #include "tensorflow/core/framework/op_kernel.h"
 #include "tensorflow/core/framework/resource_base.h"
 #include "tensorflow/core/lib/core/threadpool.h"
+#include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/mutex.h"
 #include "tensorflow/core/platform/thread_annotations.h"
 
@@ -446,6 +447,7 @@ absl::Status DeviceCompiler<ExecutableType, ClientType>::CompileImpl(
     DeviceCompilationProfiler* profiler,
     const XlaCompiler::CompilationResult** out_compilation_result,
     ExecutableType** out_executable) {
+  Env* env = Env::Default();
   DCHECK_NE(out_executable, nullptr);
   VLOG(2) << "DeviceCompiler::Compile " << DebugString();
 
@@ -455,8 +457,12 @@ absl::Status DeviceCompiler<ExecutableType, ClientType>::CompileImpl(
       VLOG(3) << i << ": " << args[i].HumanString();
     }
   }
+  const int64_t signature_build_start_time_us = env->NowMicros();
   TF_ASSIGN_OR_RETURN(auto signature,
                       DeviceCompilationClusterSignature::Build(function, args));
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild,
+      env->NowMicros() - signature_build_start_time_us);
 
   // The outer lock protects the existence of the mutex in the map.
   mutex* cluster_mutex;
@@ -479,7 +485,11 @@ absl::Status DeviceCompiler<ExecutableType, ClientType>::CompileImpl(
   // TODO(phawkins): this locking will need to be restructured when we implement
   // cache eviction.
   mutex_lock cluster_compile_lock(*cluster_mutex);
+  const int64_t cache_lookup_start_time_us = env->NowMicros();
   auto cache_value = cache_->LookupOrCreate(signature);
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kCacheLookup,
+      env->NowMicros() - cache_lookup_start_time_us);
 
   int64_t current_request_count = cache_value.request_count;
   VLOG(2) << "Compilation cache entry hit: "

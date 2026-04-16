@@ -27,6 +27,7 @@ limitations under the License.
 #include "absl/container/flat_hash_set.h"
 #include "absl/status/status.h"
 #include "absl/types/span.h"
+#include "tensorflow/compiler/jit/device_compilation_profiler.h"
 #include "tensorflow/compiler/jit/pjrt_tensor_buffer.h"
 #include "tensorflow/compiler/jit/pjrt_tensor_buffer_util.h"
 #include "tensorflow/compiler/jit/variable_info.h"
@@ -55,6 +56,7 @@ limitations under the License.
 #include "tensorflow/core/framework/types.h"
 #include "tensorflow/core/lib/core/errors.h"
 #include "tensorflow/core/lib/core/refcount.h"
+#include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/errors.h"
 #include "tensorflow/core/platform/status.h"
 #include "tensorflow/core/platform/statusor.h"
@@ -555,7 +557,28 @@ absl::StatusOr<std::vector<XlaCompiler::Argument>>
 XlaComputationLaunchContext::BuildXlaCompilerArguments(
     absl::Span<int const> must_be_constant_idxs,
     absl::Span<const Tensor* const> inputs,
-    absl::Span<VariableInfo const> variable_args, Device* device) {
+    absl::Span<VariableInfo const> variable_args, Device* device,
+    const NameAttrList* function, DeviceCompilationProfiler* profiler) {
+  const bool record_phase_timings = function != nullptr && profiler != nullptr;
+  Env* env = record_phase_timings ? Env::Default() : nullptr;
+  const int64_t build_start_time_us =
+      record_phase_timings ? env->NowMicros() : 0;
+  int64_t prepare_constant_indices_time_us = 0;
+  int64_t prepare_output_vector_time_us = 0;
+  int64_t prepare_variable_lookup_time_us = 0;
+  int64_t constant_inputs_create_argument_time_us = 0;
+  int64_t constant_inputs_populate_argument_time_us = 0;
+  int64_t constant_inputs_time_us = 0;
+  int64_t parameter_inputs_create_argument_time_us = 0;
+  int64_t parameter_inputs_populate_argument_time_us = 0;
+  int64_t parameter_inputs_time_us = 0;
+  int64_t resource_inputs_time_us = 0;
+  auto register_phase_timing = [&](DeviceCompilationProfiler::CompilePhase phase,
+                                   int64_t elapsed_time_us) {
+    if (record_phase_timings) {
+      profiler->RegisterPhaseTiming(*function, phase, elapsed_time_us);
+    }
+  };
   if (!must_be_constant_idxs.empty() &&
       !absl::c_is_sorted(must_be_constant_idxs)) {
     return absl::InvalidArgumentError("must_be_constant_idxs is not sorted");
@@ -563,8 +586,18 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
   VLOG(2) << "Must be const args: {"
           << absl::StrJoin(must_be_constant_idxs, ",") << "} out of "
           << inputs.size() << " args";
+  if (record_phase_timings) {
+    prepare_constant_indices_time_us = env->NowMicros() - build_start_time_us;
+  }
+
   std::vector<XlaCompiler::Argument> out;
+  const int64_t prepare_output_vector_start_time_us =
+      record_phase_timings ? env->NowMicros() : 0;
   out.resize(inputs.size());
+  if (record_phase_timings) {
+    prepare_output_vector_time_us =
+        env->NowMicros() - prepare_output_vector_start_time_us;
+  }
 
   // TODO(cheshire): Avoid duplication with framework/op_kernel.h
   DeviceContext* device_context = nullptr;
@@ -584,11 +617,20 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
   }
 
   absl::flat_hash_map<int, const VariableInfo*> variable_info_lookup;
+  const int64_t prepare_variable_lookup_start_time_us =
+      record_phase_timings ? env->NowMicros() : 0;
   TF_CHECK_OK(CreateVariableInfoLookup(variable_args, variable_info_lookup));
+  if (record_phase_timings) {
+    prepare_variable_lookup_time_us =
+        env->NowMicros() - prepare_variable_lookup_start_time_us;
+  }
+  const int64_t setup_end_time_us = record_phase_timings ? env->NowMicros() : 0;
   for (int64_t input_num = 0; input_num < inputs.size(); ++input_num) {
     const Tensor* input = inputs[input_num];
 
     XlaCompiler::Argument& arg = out[input_num];
+    const int64_t branch_start_time_us =
+        record_phase_timings ? env->NowMicros() : 0;
     if (variable_info_lookup.count(input_num) && device != nullptr) {
       // Handles resource variables.
       TF_RET_CHECK(input->dtype() == DT_RESOURCE);
@@ -625,14 +667,26 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
         arg.kind = XlaCompiler::Argument::kConstantResource;
         arg.constant_value = value_on_host;
       }
+      if (record_phase_timings) {
+        resource_inputs_time_us += env->NowMicros() - branch_start_time_us;
+      }
     } else if (absl::c_binary_search(must_be_constant_idxs, input_num)) {
+      const int64_t populate_argument_start_time_us =
+          record_phase_timings ? env->NowMicros() : 0;
       arg.kind = XlaCompiler::Argument::kConstant;
       arg.type = input->dtype();
       arg.shape = input->shape();
       arg.constant_value = *input;
+      if (record_phase_timings) {
+        constant_inputs_populate_argument_time_us +=
+            env->NowMicros() - populate_argument_start_time_us;
+        constant_inputs_time_us += env->NowMicros() - branch_start_time_us;
+      }
     } else {
       // Normal inputs.
       TF_RET_CHECK(input->dtype() != DT_RESOURCE);
+      const int64_t populate_argument_start_time_us =
+          record_phase_timings ? env->NowMicros() : 0;
       if (input->NumElements() > 0) {
         arg.kind = XlaCompiler::Argument::kParameter;
       } else {
@@ -641,8 +695,57 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
       }
       arg.type = input->dtype();
       arg.shape = input->shape();
+      if (record_phase_timings) {
+        parameter_inputs_populate_argument_time_us +=
+            env->NowMicros() - populate_argument_start_time_us;
+        parameter_inputs_time_us += env->NowMicros() - branch_start_time_us;
+      }
     }
   }
+
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::
+          kBuildXlaCompilerArgumentsPrepareConstantIndices,
+      prepare_constant_indices_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::
+          kBuildXlaCompilerArgumentsPrepareOutputVector,
+      prepare_output_vector_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::
+          kBuildXlaCompilerArgumentsPrepareVariableLookup,
+      prepare_variable_lookup_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArgumentsSetup,
+      setup_end_time_us - build_start_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::
+          kBuildXlaCompilerArgumentsConstantInputsCreateArgument,
+      constant_inputs_create_argument_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::
+          kBuildXlaCompilerArgumentsConstantInputsPopulateArgument,
+      constant_inputs_populate_argument_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::
+          kBuildXlaCompilerArgumentsConstantInputs,
+      constant_inputs_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::
+          kBuildXlaCompilerArgumentsParameterInputsCreateArgument,
+      parameter_inputs_create_argument_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::
+          kBuildXlaCompilerArgumentsParameterInputsPopulateArgument,
+      parameter_inputs_populate_argument_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::
+          kBuildXlaCompilerArgumentsParameterInputs,
+      parameter_inputs_time_us);
+  register_phase_timing(
+      DeviceCompilationProfiler::CompilePhase::
+          kBuildXlaCompilerArgumentsResourceInputs,
+      resource_inputs_time_us);
 
   return out;
 }

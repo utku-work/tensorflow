@@ -38,6 +38,8 @@ limitations under the License.
 
 namespace tensorflow {
 
+class DeviceCompilationProfiler;
+
 // Creates a list of updated resource variables.
 absl::StatusOr<std::vector<VariableInfo>> GatherVariableInfo(
     OpKernelContext* ctx,
@@ -177,7 +179,9 @@ class XlaComputationLaunchContext {
   BuildXlaCompilerArguments(absl::Span<int const> must_be_constant_idxs,
                             absl::Span<const Tensor* const> inputs,
                             absl::Span<VariableInfo const> variable_args,
-                            Device* device);
+                            Device* device,
+                            const NameAttrList* function = nullptr,
+                            DeviceCompilationProfiler* profiler = nullptr);
 
   // Add all inputs within `ctx` as XLA arguments (returned by arguments()).
   // `variables` is a map from TensorFlow argument number to resource variable.

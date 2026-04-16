@@ -109,6 +109,32 @@ auto* xla_launch_counter = monitoring::Counter<1>::New(
     "/tensorflow/core/xla_launch_counter",
     "The number of times a XlaLaunch is called.", "device");
 
+absl::StatusOr<DeviceCompilationProfiler*> GetOrCreateCompilationProfiler(
+    OpKernelContext* ctx, const XlaPlatformInfo& platform_info,
+    bool use_pjrt) {
+  ResourceMgr* rm = ctx->resource_manager();
+  std::string profiler_name = "device_compilation_profiler";
+  if (use_pjrt) {
+    TF_ASSIGN_OR_RETURN(rm,
+                        GetResourceMgrForDeviceCompiler(*ctx,
+                                                        platform_info.device_type()));
+    profiler_name =
+        GetPjRtDeviceCompilationProfilerResourceName(platform_info.device_type());
+  }
+  if (rm == nullptr) {
+    return absl::InternalError("No resource manager.");
+  }
+
+  DeviceCompilationProfiler* profiler = nullptr;
+  TF_RETURN_IF_ERROR(rm->LookupOrCreate<DeviceCompilationProfiler>(
+      rm->default_container(), profiler_name, &profiler,
+      [](DeviceCompilationProfiler** profiler) {
+        *profiler = new DeviceCompilationProfiler();
+        return absl::OkStatus();
+      }));
+  return profiler;
+}
+
 // A closure describing how to run a compiled version of a TensorFlow function.
 //
 // It may seem unusual to stick the resource variable snapshots in this class.
@@ -365,22 +391,45 @@ absl::StatusOr<
 GetXlaCompilerArgsAndSnapshotVariables(
     absl::Span<const int> variable_indices,
     absl::Span<const int> must_be_constant_idxs,
-    absl::Span<const Tensor* const> inputs, OpKernelContext* ctx) {
+  absl::Span<const Tensor* const> inputs, OpKernelContext* ctx,
+  const NameAttrList& function, DeviceCompilationProfiler* profiler) {
+  Env* env = Env::Default();
   std::pair<std::vector<XlaCompiler::Argument>, ResourceVarsSnapshot> result;
 
+  const int64_t get_variable_infos_start_time_us = env->NowMicros();
   std::vector<VariableInfo> variable_infos;
   TF_RETURN_IF_ERROR(
       GetVariableInfosFromInputs(ctx->resource_manager(), ctx->device(), inputs,
                                  variable_indices, &variable_infos));
-  TF_RETURN_IF_ERROR(LockVariables(absl::MakeSpan(variable_infos)));
+  profiler->RegisterPhaseTiming(
+    function,
+    DeviceCompilationProfiler::CompilePhase::kGetVariableInfosFromInputs,
+    env->NowMicros() - get_variable_infos_start_time_us);
 
+  const int64_t lock_variables_start_time_us = env->NowMicros();
+  TF_RETURN_IF_ERROR(LockVariables(absl::MakeSpan(variable_infos)));
+  profiler->RegisterPhaseTiming(
+    function, DeviceCompilationProfiler::CompilePhase::kLockVariables,
+    env->NowMicros() - lock_variables_start_time_us);
+
+  const int64_t snapshot_resource_variables_start_time_us = env->NowMicros();
   TF_RETURN_IF_ERROR(SnapshotResourceVariables(ctx, variable_indices,
                                                variable_infos, &result.second));
+  profiler->RegisterPhaseTiming(
+    function,
+    DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables,
+    env->NowMicros() - snapshot_resource_variables_start_time_us);
 
+  const int64_t build_xla_compiler_arguments_start_time_us = env->NowMicros();
   TF_ASSIGN_OR_RETURN(result.first,
                       XlaComputationLaunchContext::BuildXlaCompilerArguments(
                           must_be_constant_idxs, inputs, variable_infos,
-                          static_cast<Device*>(ctx->device())));
+              static_cast<Device*>(ctx->device()), &function,
+              profiler));
+  profiler->RegisterPhaseTiming(
+    function,
+    DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArguments,
+    env->NowMicros() - build_xla_compiler_arguments_start_time_us);
   return result;
 }
 
@@ -1039,6 +1088,8 @@ XlaCompileOp::XlaCompileOp(OpKernelConstruction* ctx)
 void XlaCompileOp::Compute(OpKernelContext* ctx) {
   VLOG(3) << "XlaCompileOp " << def().name()
           << (must_compile_ ? "(must-compile)" : "");
+  Env* env = Env::Default();
+  const int64_t start_time_us = env->NowMicros();
   const XlaCompiler::CompilationResult* kernel = nullptr;
   xla::LocalClient* client = nullptr;
   xla::LocalExecutable* executable = nullptr;
@@ -1065,13 +1116,24 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
       GetXlaOpsCommonFlags()
           ->tf_xla_use_device_api.IsEnabledInXlaCompileAndRunForDevice(
               platform_info_.device_type());
+    auto profiler_or =
+      GetOrCreateCompilationProfiler(ctx, platform_info_, use_pjrt);
+    OP_REQUIRES_OK(ctx, profiler_or.status());
+    DeviceCompilationProfiler* profiler = *profiler_or;
+    core::ScopedUnref profiler_ref(profiler);
 
   if (GetXlaOpsCommonFlags()->tf_xla_always_defer_compilation ||
       cannot_compile_cluster) {
     executable = nullptr;
   } else {
+    const int64_t get_args_and_snapshot_start_time_us = env->NowMicros();
     auto args_and_variables_snapshot = GetXlaCompilerArgsAndSnapshotVariables(
-        resources_, constants_, inputs, ctx);
+      resources_, constants_, inputs, ctx, function_, profiler);
+    profiler->RegisterPhaseTiming(
+      function_,
+      DeviceCompilationProfiler::CompilePhase::
+        kGetXlaCompilerArgsAndSnapshotVariables,
+      env->NowMicros() - get_args_and_snapshot_start_time_us);
     OP_REQUIRES_OK(ctx, args_and_variables_snapshot.status());
     const std::vector<XlaCompiler::Argument>& args =
         args_and_variables_snapshot->first;
@@ -1088,9 +1150,15 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
           /*may_alias_resource_update=*/false, &kernel, &pjrt_client,
           &pjrt_executable);
     } else {
+        const int64_t compile_to_local_executable_start_time_us =
+          env->NowMicros();
       status = CompileToLocalExecutable(
           ctx, function_, has_ref_vars_, platform_info_, args, compile_mode,
           /*may_alias_resource_update=*/false, &client, &kernel, &executable);
+        profiler->RegisterPhaseTiming(
+          function_,
+          DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable,
+          env->NowMicros() - compile_to_local_executable_start_time_us);
     }
 
     if (compile_mode != DeviceCompileMode::kLazy ||
@@ -1136,6 +1204,9 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
     compilation_successful.scalar<bool>()() = false;
     ctx->set_output(0, compilation_key);
     ctx->set_output(1, compilation_successful);
+    profiler->RegisterPhaseTiming(
+        function_, DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute,
+        env->NowMicros() - start_time_us);
     return;
   }
 
@@ -1165,6 +1236,9 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
 
   ctx->set_output(0, compilation_key);
   ctx->set_output(1, compilation_successful);
+  profiler->RegisterPhaseTiming(
+      function_, DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute,
+      env->NowMicros() - start_time_us);
 }
 
 XlaRunOp::XlaRunOp(OpKernelConstruction* ctx)
