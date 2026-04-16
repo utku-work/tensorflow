@@ -144,22 +144,31 @@ absl::StatusOr<bool> TryUseCompiledLocalExecutableCacheHit(
     xla::LocalClient** client,
     const XlaCompiler::CompilationResult** compilation_result,
     xla::LocalExecutable** executable) {
-  Env* env = Env::Default();
-  const int64_t fast_path_start_time_us = env->NowMicros();
+  const bool record_inner_phase_timings =
+      !ShouldOnlyRecordXlaCompileOpComputeTiming();
+  Env* env = record_inner_phase_timings ? Env::Default() : nullptr;
+  const int64_t fast_path_start_time_us =
+      record_inner_phase_timings ? env->NowMicros() : 0;
 
   ResourceMgr* rm = ctx->resource_manager();
   if (rm == nullptr) {
     return absl::InternalError("No resource manager.");
   }
 
-  const int64_t signature_build_start_time_us = env->NowMicros();
-  TF_ASSIGN_OR_RETURN(
-      DeviceCompilationClusterSignature signature,
-      DeviceCompilationClusterSignature::BuildForNoResourceInputs(
-          function, inputs, must_be_constant_idxs));
-  profiler->RegisterPhaseTiming(
-      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild,
-      env->NowMicros() - signature_build_start_time_us);
+  DeviceCompilationClusterSignature signature;
+  if (record_inner_phase_timings) {
+    const int64_t signature_build_start_time_us = env->NowMicros();
+    TF_ASSIGN_OR_RETURN(
+        signature, DeviceCompilationClusterSignature::BuildForNoResourceInputs(
+                       function, inputs, must_be_constant_idxs));
+    profiler->RegisterPhaseTiming(
+        function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild,
+        env->NowMicros() - signature_build_start_time_us);
+  } else {
+    TF_ASSIGN_OR_RETURN(
+        signature, DeviceCompilationClusterSignature::BuildForNoResourceInputs(
+                       function, inputs, must_be_constant_idxs));
+  }
 
   TF_ASSIGN_OR_RETURN(DeviceType compilation_device_type,
                       GetCompilationDeviceType(platform_info.device_type()));
@@ -176,11 +185,17 @@ absl::StatusOr<bool> TryUseCompiledLocalExecutableCacheHit(
 
   *client = static_cast<xla::LocalClient*>(xla_device_compiler->client());
 
-  const int64_t cache_lookup_start_time_us = env->NowMicros();
-  auto cache_value = xla_device_compiler->cache()->Peek(signature);
-  profiler->RegisterPhaseTiming(
-      function, DeviceCompilationProfiler::CompilePhase::kCacheLookup,
-      env->NowMicros() - cache_lookup_start_time_us);
+  auto cache_value = [&] {
+    if (record_inner_phase_timings) {
+      const int64_t cache_lookup_start_time_us = env->NowMicros();
+      auto value = xla_device_compiler->cache()->Peek(signature);
+      profiler->RegisterPhaseTiming(
+          function, DeviceCompilationProfiler::CompilePhase::kCacheLookup,
+          env->NowMicros() - cache_lookup_start_time_us);
+      return value;
+    }
+    return xla_device_compiler->cache()->Peek(signature);
+  }();
 
   if (!cache_value.has_value() ||
       cache_value->compile_state != DeviceCompileState::kCompiled) {
@@ -192,16 +207,18 @@ absl::StatusOr<bool> TryUseCompiledLocalExecutableCacheHit(
   *executable = cache_value->executable;
   profiler->RegisterExecution(function);
 
-  const int64_t fast_path_elapsed_time_us =
-      env->NowMicros() - fast_path_start_time_us;
-  profiler->RegisterPhaseTiming(
-      function,
-      DeviceCompilationProfiler::CompilePhase::kLocalExecutableCacheHitFastPath,
-      fast_path_elapsed_time_us);
-  profiler->RegisterPhaseTiming(
-      function,
-      DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable,
-      fast_path_elapsed_time_us);
+  if (record_inner_phase_timings) {
+    const int64_t fast_path_elapsed_time_us =
+        env->NowMicros() - fast_path_start_time_us;
+    profiler->RegisterPhaseTiming(
+        function,
+        DeviceCompilationProfiler::CompilePhase::kLocalExecutableCacheHitFastPath,
+        fast_path_elapsed_time_us);
+    profiler->RegisterPhaseTiming(
+        function,
+        DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable,
+        fast_path_elapsed_time_us);
+  }
   return true;
 }
 
@@ -463,46 +480,59 @@ GetXlaCompilerArgsAndSnapshotVariables(
     absl::Span<const int> must_be_constant_idxs,
   absl::Span<const Tensor* const> inputs, OpKernelContext* ctx,
   const NameAttrList& function, DeviceCompilationProfiler* profiler) {
-  Env* env = Env::Default();
+  const bool record_inner_phase_timings =
+      !ShouldOnlyRecordXlaCompileOpComputeTiming();
+  Env* env = record_inner_phase_timings ? Env::Default() : nullptr;
   std::pair<std::vector<XlaCompiler::Argument>, ResourceVarsSnapshot> result;
 
-  const int64_t get_variable_infos_start_time_us = env->NowMicros();
+  const int64_t get_variable_infos_start_time_us =
+      record_inner_phase_timings ? env->NowMicros() : 0;
   std::vector<VariableInfo> variable_infos;
   TF_RETURN_IF_ERROR(
       GetVariableInfosFromInputs(ctx->resource_manager(), ctx->device(), inputs,
                                  variable_indices, &variable_infos));
-  profiler->RegisterPhaseTiming(
-    function,
-    DeviceCompilationProfiler::CompilePhase::kGetVariableInfosFromInputs,
-    env->NowMicros() - get_variable_infos_start_time_us);
+  if (record_inner_phase_timings) {
+    profiler->RegisterPhaseTiming(
+        function,
+        DeviceCompilationProfiler::CompilePhase::kGetVariableInfosFromInputs,
+        env->NowMicros() - get_variable_infos_start_time_us);
+  }
 
-  const int64_t lock_variables_start_time_us = env->NowMicros();
+  const int64_t lock_variables_start_time_us =
+      record_inner_phase_timings ? env->NowMicros() : 0;
   TF_RETURN_IF_ERROR(LockVariables(absl::MakeSpan(variable_infos)));
-  profiler->RegisterPhaseTiming(
-    function, DeviceCompilationProfiler::CompilePhase::kLockVariables,
-    env->NowMicros() - lock_variables_start_time_us);
+  if (record_inner_phase_timings) {
+    profiler->RegisterPhaseTiming(
+        function, DeviceCompilationProfiler::CompilePhase::kLockVariables,
+        env->NowMicros() - lock_variables_start_time_us);
+  }
 
-  const int64_t snapshot_resource_variables_start_time_us = env->NowMicros();
+  const int64_t snapshot_resource_variables_start_time_us =
+      record_inner_phase_timings ? env->NowMicros() : 0;
   TF_RETURN_IF_ERROR(SnapshotResourceVariables(ctx, variable_indices,
                                                variable_infos, &result.second));
-  profiler->RegisterPhaseTiming(
-    function,
-    DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables,
-    env->NowMicros() - snapshot_resource_variables_start_time_us);
+  if (record_inner_phase_timings) {
+    profiler->RegisterPhaseTiming(
+        function,
+        DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables,
+        env->NowMicros() - snapshot_resource_variables_start_time_us);
+  }
 
-  const int64_t build_xla_compiler_arguments_start_time_us = env->NowMicros();
+  const int64_t build_xla_compiler_arguments_start_time_us =
+      record_inner_phase_timings ? env->NowMicros() : 0;
   TF_ASSIGN_OR_RETURN(result.first,
                       XlaComputationLaunchContext::BuildXlaCompilerArguments(
                           must_be_constant_idxs, inputs, variable_infos,
-              static_cast<Device*>(ctx->device()), &function,
-              profiler));
-  profiler->RegisterPhaseTiming(
-    function,
-    DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArguments,
-    env->NowMicros() - build_xla_compiler_arguments_start_time_us);
+                          static_cast<Device*>(ctx->device()), &function,
+                          profiler));
+  if (record_inner_phase_timings) {
+    profiler->RegisterPhaseTiming(
+        function,
+        DeviceCompilationProfiler::CompilePhase::kBuildXlaCompilerArguments,
+        env->NowMicros() - build_xla_compiler_arguments_start_time_us);
+  }
   return result;
 }
-
 
 std::unique_ptr<DimExpr> ExprFromProto(const ExpressionProto& proto) {
   switch (proto.node_type_case()) {
@@ -1186,11 +1216,13 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
       GetXlaOpsCommonFlags()
           ->tf_xla_use_device_api.IsEnabledInXlaCompileAndRunForDevice(
               platform_info_.device_type());
-    auto profiler_or =
+  const bool record_inner_phase_timings =
+      !ShouldOnlyRecordXlaCompileOpComputeTiming();
+  auto profiler_or =
       GetOrCreateCompilationProfiler(ctx, platform_info_, use_pjrt);
-    OP_REQUIRES_OK(ctx, profiler_or.status());
-    DeviceCompilationProfiler* profiler = *profiler_or;
-    core::ScopedUnref profiler_ref(profiler);
+  OP_REQUIRES_OK(ctx, profiler_or.status());
+  DeviceCompilationProfiler* profiler = *profiler_or;
+  core::ScopedUnref profiler_ref(profiler);
 
   if (GetXlaOpsCommonFlags()->tf_xla_always_defer_compilation ||
       cannot_compile_cluster) {
@@ -1209,15 +1241,18 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
     if (used_compiled_cache_hit_fast_path) {
       variables_snapshot.clear();
     } else {
-      const int64_t get_args_and_snapshot_start_time_us = env->NowMicros();
+      const int64_t get_args_and_snapshot_start_time_us =
+          record_inner_phase_timings ? env->NowMicros() : 0;
       auto args_and_variables_snapshot =
           GetXlaCompilerArgsAndSnapshotVariables(resources_, constants_, inputs,
                                                 ctx, function_, profiler);
-      profiler->RegisterPhaseTiming(
-          function_,
-          DeviceCompilationProfiler::CompilePhase::
-              kGetXlaCompilerArgsAndSnapshotVariables,
-          env->NowMicros() - get_args_and_snapshot_start_time_us);
+      if (record_inner_phase_timings) {
+        profiler->RegisterPhaseTiming(
+            function_,
+            DeviceCompilationProfiler::CompilePhase::
+                kGetXlaCompilerArgsAndSnapshotVariables,
+            env->NowMicros() - get_args_and_snapshot_start_time_us);
+      }
       OP_REQUIRES_OK(ctx, args_and_variables_snapshot.status());
       const std::vector<XlaCompiler::Argument>& args =
           args_and_variables_snapshot->first;
@@ -1234,15 +1269,17 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
             &pjrt_executable);
       } else {
         const int64_t compile_to_local_executable_start_time_us =
-            env->NowMicros();
+            record_inner_phase_timings ? env->NowMicros() : 0;
         status = CompileToLocalExecutable(
             ctx, function_, has_ref_vars_, platform_info_, args, compile_mode,
             /*may_alias_resource_update=*/false, &client, &kernel,
             &executable);
-        profiler->RegisterPhaseTiming(
-            function_,
-            DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable,
-            env->NowMicros() - compile_to_local_executable_start_time_us);
+        if (record_inner_phase_timings) {
+          profiler->RegisterPhaseTiming(
+              function_,
+              DeviceCompilationProfiler::CompilePhase::kCompileToLocalExecutable,
+              env->NowMicros() - compile_to_local_executable_start_time_us);
+        }
       }
     }
 

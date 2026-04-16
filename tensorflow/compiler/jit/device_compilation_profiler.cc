@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "tensorflow/compiler/jit/device_compilation_profiler.h"
 
+#include <atomic>
 #include <cstdlib>
 #include <cstdint>
 #include <memory>
@@ -40,6 +41,15 @@ namespace tensorflow {
 namespace {
 constexpr char kDeviceCompilationProfilerCsvPathEnvVar[] =
   "TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH";
+constexpr char kDeviceCompilationProfilerOnlyComputeEnvVar[] =
+    "TF_XLA_DEVICE_COMPILATION_PROFILER_ONLY_COMPUTE";
+
+std::atomic<int> g_only_compute_timing_override{-1};
+
+bool ReadBoolFromEnvVar(const char* env_var_name) {
+  const char* value = std::getenv(env_var_name);
+  return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
 
 bool ShouldBeMegamorphic(int64_t compile_count, int64_t execution_count) {
   int64_t kCompileThreshold = 10;
@@ -263,6 +273,29 @@ bool ShouldDumpCsvAfterPhase(DeviceCompilationProfiler::CompilePhase phase) {
 
 }  // namespace
 
+bool ShouldOnlyRecordXlaCompileOpComputeTiming() {
+  const int override = g_only_compute_timing_override.load();
+  if (override != -1) {
+    return override == 1;
+  }
+
+  static const bool enabled =
+      ReadBoolFromEnvVar(kDeviceCompilationProfilerOnlyComputeEnvVar);
+  return enabled;
+}
+
+bool ShouldRecordDeviceCompilationPhaseTiming(
+    DeviceCompilationProfiler::CompilePhase phase) {
+  return phase == DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute ||
+         !ShouldOnlyRecordXlaCompileOpComputeTiming();
+}
+
+void SetOnlyRecordXlaCompileOpComputeTimingForTesting(
+    std::optional<bool> enabled) {
+  g_only_compute_timing_override.store(
+      enabled.has_value() ? (*enabled ? 1 : 0) : -1);
+}
+
 DeviceCompilationProfiler::~DeviceCompilationProfiler() {
   if (const char* csv_path = GetCsvDumpPathFromEnv()) {
     absl::Status dump_status = DumpCsv(csv_path);
@@ -298,6 +331,10 @@ void DeviceCompilationProfiler::RegisterExecution(
 
 void DeviceCompilationProfiler::RegisterPhaseTiming(
     const NameAttrList& function, CompilePhase phase, int64_t elapsed_time_us) {
+  if (!ShouldRecordDeviceCompilationPhaseTiming(phase)) {
+    return;
+  }
+
   {
     mutex_lock lock(mu_);
     ClusterCompileStats& stats =

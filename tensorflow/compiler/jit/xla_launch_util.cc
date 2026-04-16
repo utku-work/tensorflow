@@ -559,7 +559,9 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
     absl::Span<const Tensor* const> inputs,
     absl::Span<VariableInfo const> variable_args, Device* device,
     const NameAttrList* function, DeviceCompilationProfiler* profiler) {
-  const bool record_phase_timings = function != nullptr && profiler != nullptr;
+  const bool record_phase_timings =
+      function != nullptr && profiler != nullptr &&
+      !ShouldOnlyRecordXlaCompileOpComputeTiming();
   Env* env = record_phase_timings ? Env::Default() : nullptr;
   const int64_t build_start_time_us =
       record_phase_timings ? env->NowMicros() : 0;

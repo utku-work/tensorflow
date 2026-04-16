@@ -17,6 +17,7 @@ limitations under the License.
 #define TENSORFLOW_COMPILER_JIT_DEVICE_COMPILATION_PROFILER_H_
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -228,6 +229,20 @@ class DeviceCompilationProfiler : public ResourceBase {
   DeviceCompilationProfiler(const DeviceCompilationProfiler&) = delete;
   void operator=(const DeviceCompilationProfiler&) = delete;
 };
+
+// Returns true when only the outer `xla_compile_op_compute` phase should be
+// recorded. This is controlled by the
+// `TF_XLA_DEVICE_COMPILATION_PROFILER_ONLY_COMPUTE` environment variable.
+bool ShouldOnlyRecordXlaCompileOpComputeTiming();
+
+// Returns whether a timing phase should be recorded under the current
+// profiling mode.
+bool ShouldRecordDeviceCompilationPhaseTiming(
+    DeviceCompilationProfiler::CompilePhase phase);
+
+// Test-only override for `ShouldOnlyRecordXlaCompileOpComputeTiming()`.
+void SetOnlyRecordXlaCompileOpComputeTimingForTesting(
+    std::optional<bool> enabled);
 
 }  // namespace tensorflow
 

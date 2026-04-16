@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <cstdlib>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -128,6 +129,30 @@ TEST(DeviceCompilationProfilerTest, RegisterPhaseTiming) {
   EXPECT_EQ(stats.signature_build.cumulative_time_us, 10);
   EXPECT_EQ(stats.cache_lookup.sample_count, 1);
   EXPECT_EQ(stats.cache_lookup.cumulative_time_us, 5);
+}
+
+TEST(DeviceCompilationProfilerTest, RegisterPhaseTimingOnlyComputeMode) {
+  SetOnlyRecordXlaCompileOpComputeTimingForTesting(std::optional<bool>(true));
+
+  DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();
+  core::ScopedUnref profiler_ref(profiler);
+
+  NameAttrList function;
+  function.set_name("TestFunc");
+
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kSignatureBuild, 7);
+  profiler->RegisterPhaseTiming(
+      function, DeviceCompilationProfiler::CompilePhase::kXlaCompileOpCompute,
+      11);
+
+  TF_ASSERT_OK_AND_ASSIGN(auto stats, profiler->GetCompileStats(function));
+  EXPECT_EQ(stats.signature_build.sample_count, 0);
+  EXPECT_EQ(stats.signature_build.cumulative_time_us, 0);
+  EXPECT_EQ(stats.xla_compile_op_compute.sample_count, 1);
+  EXPECT_EQ(stats.xla_compile_op_compute.cumulative_time_us, 11);
+
+  SetOnlyRecordXlaCompileOpComputeTimingForTesting(std::nullopt);
 }
 
 TEST(DeviceCompilationProfilerTest, DumpCsv) {
