@@ -253,7 +253,18 @@ bool ShouldEnableDeviceCompilationCacheHitFastPath();
 
 // Test-only override for `ShouldEnableDeviceCompilationCacheHitFastPath()`.
 void SetEnableDeviceCompilationCacheHitFastPathForTesting(
-  std::optional<bool> enabled);
+    std::optional<bool> enabled);
+
+// Returns true when the zero-resource helper short-circuit is enabled. This is
+// controlled by the
+// `TF_XLA_DEVICE_COMPILATION_ENABLE_ZERO_RESOURCE_ARG_SHORT_CIRCUIT`
+// environment variable. The short-circuit is enabled by default and disabled
+// when the env var is set to `0`.
+bool ShouldEnableZeroResourceArgumentShortCircuit();
+
+// Test-only override for `ShouldEnableZeroResourceArgumentShortCircuit()`.
+void SetEnableZeroResourceArgumentShortCircuitForTesting(
+    std::optional<bool> enabled);
 
 }  // namespace tensorflow
 

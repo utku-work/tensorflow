@@ -478,44 +478,48 @@ absl::StatusOr<
 GetXlaCompilerArgsAndSnapshotVariables(
     absl::Span<const int> variable_indices,
     absl::Span<const int> must_be_constant_idxs,
-  absl::Span<const Tensor* const> inputs, OpKernelContext* ctx,
-  const NameAttrList& function, DeviceCompilationProfiler* profiler) {
+    absl::Span<const Tensor* const> inputs, OpKernelContext* ctx,
+    const NameAttrList& function, DeviceCompilationProfiler* profiler) {
   const bool record_inner_phase_timings =
       !ShouldOnlyRecordXlaCompileOpComputeTiming();
+  const bool use_zero_resource_short_circuit =
+      variable_indices.empty() &&
+      ShouldEnableZeroResourceArgumentShortCircuit();
   Env* env = record_inner_phase_timings ? Env::Default() : nullptr;
   std::pair<std::vector<XlaCompiler::Argument>, ResourceVarsSnapshot> result;
-
-  const int64_t get_variable_infos_start_time_us =
-      record_inner_phase_timings ? env->NowMicros() : 0;
   std::vector<VariableInfo> variable_infos;
-  TF_RETURN_IF_ERROR(
-      GetVariableInfosFromInputs(ctx->resource_manager(), ctx->device(), inputs,
-                                 variable_indices, &variable_infos));
-  if (record_inner_phase_timings) {
-    profiler->RegisterPhaseTiming(
-        function,
-        DeviceCompilationProfiler::CompilePhase::kGetVariableInfosFromInputs,
-        env->NowMicros() - get_variable_infos_start_time_us);
-  }
+  if (!use_zero_resource_short_circuit) {
+    const int64_t get_variable_infos_start_time_us =
+        record_inner_phase_timings ? env->NowMicros() : 0;
+    TF_RETURN_IF_ERROR(GetVariableInfosFromInputs(
+        ctx->resource_manager(), ctx->device(), inputs, variable_indices,
+        &variable_infos));
+    if (record_inner_phase_timings) {
+      profiler->RegisterPhaseTiming(
+          function,
+          DeviceCompilationProfiler::CompilePhase::kGetVariableInfosFromInputs,
+          env->NowMicros() - get_variable_infos_start_time_us);
+    }
 
-  const int64_t lock_variables_start_time_us =
-      record_inner_phase_timings ? env->NowMicros() : 0;
-  TF_RETURN_IF_ERROR(LockVariables(absl::MakeSpan(variable_infos)));
-  if (record_inner_phase_timings) {
-    profiler->RegisterPhaseTiming(
-        function, DeviceCompilationProfiler::CompilePhase::kLockVariables,
-        env->NowMicros() - lock_variables_start_time_us);
-  }
+    const int64_t lock_variables_start_time_us =
+        record_inner_phase_timings ? env->NowMicros() : 0;
+    TF_RETURN_IF_ERROR(LockVariables(absl::MakeSpan(variable_infos)));
+    if (record_inner_phase_timings) {
+      profiler->RegisterPhaseTiming(
+          function, DeviceCompilationProfiler::CompilePhase::kLockVariables,
+          env->NowMicros() - lock_variables_start_time_us);
+    }
 
-  const int64_t snapshot_resource_variables_start_time_us =
-      record_inner_phase_timings ? env->NowMicros() : 0;
-  TF_RETURN_IF_ERROR(SnapshotResourceVariables(ctx, variable_indices,
-                                               variable_infos, &result.second));
-  if (record_inner_phase_timings) {
-    profiler->RegisterPhaseTiming(
-        function,
-        DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables,
-        env->NowMicros() - snapshot_resource_variables_start_time_us);
+    const int64_t snapshot_resource_variables_start_time_us =
+        record_inner_phase_timings ? env->NowMicros() : 0;
+    TF_RETURN_IF_ERROR(SnapshotResourceVariables(
+        ctx, variable_indices, variable_infos, &result.second));
+    if (record_inner_phase_timings) {
+      profiler->RegisterPhaseTiming(
+          function,
+          DeviceCompilationProfiler::CompilePhase::kSnapshotResourceVariables,
+          env->NowMicros() - snapshot_resource_variables_start_time_us);
+    }
   }
 
   const int64_t build_xla_compiler_arguments_start_time_us =

@@ -172,6 +172,25 @@ TEST(DeviceCompilationProfilerTest, CacheHitFastPathTestingOverride) {
   SetEnableDeviceCompilationCacheHitFastPathForTesting(std::nullopt);
 }
 
+TEST(DeviceCompilationProfilerTest,
+     ZeroResourceArgumentShortCircuitEnabledByDefault) {
+  SetEnableZeroResourceArgumentShortCircuitForTesting(std::nullopt);
+  EXPECT_TRUE(ShouldEnableZeroResourceArgumentShortCircuit());
+}
+
+TEST(DeviceCompilationProfilerTest,
+     ZeroResourceArgumentShortCircuitTestingOverride) {
+  SetEnableZeroResourceArgumentShortCircuitForTesting(
+      std::optional<bool>(false));
+  EXPECT_FALSE(ShouldEnableZeroResourceArgumentShortCircuit());
+
+  SetEnableZeroResourceArgumentShortCircuitForTesting(
+      std::optional<bool>(true));
+  EXPECT_TRUE(ShouldEnableZeroResourceArgumentShortCircuit());
+
+  SetEnableZeroResourceArgumentShortCircuitForTesting(std::nullopt);
+}
+
 TEST(DeviceCompilationProfilerTest, DumpCsv) {
   // DumpCsv should write one row per recorded phase sample.
   DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();
