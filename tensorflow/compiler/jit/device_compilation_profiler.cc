@@ -368,7 +368,7 @@ absl::Status DeviceCompilationProfiler::DumpCsv(const std::string& path) const {
   }
 
   Env* env = Env::Default();
-  const std::string dirname = io::Dirname(path);
+  const std::string dirname(io::Dirname(path));
   if (!dirname.empty() && dirname != path) {
     TF_RETURN_IF_ERROR(env->RecursivelyCreateDir(dirname));
   }
