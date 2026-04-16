@@ -155,6 +155,23 @@ TEST(DeviceCompilationProfilerTest, RegisterPhaseTimingOnlyComputeMode) {
   SetOnlyRecordXlaCompileOpComputeTimingForTesting(std::nullopt);
 }
 
+TEST(DeviceCompilationProfilerTest, CacheHitFastPathEnabledByDefault) {
+  SetEnableDeviceCompilationCacheHitFastPathForTesting(std::nullopt);
+  EXPECT_TRUE(ShouldEnableDeviceCompilationCacheHitFastPath());
+}
+
+TEST(DeviceCompilationProfilerTest, CacheHitFastPathTestingOverride) {
+  SetEnableDeviceCompilationCacheHitFastPathForTesting(
+      std::optional<bool>(false));
+  EXPECT_FALSE(ShouldEnableDeviceCompilationCacheHitFastPath());
+
+  SetEnableDeviceCompilationCacheHitFastPathForTesting(
+      std::optional<bool>(true));
+  EXPECT_TRUE(ShouldEnableDeviceCompilationCacheHitFastPath());
+
+  SetEnableDeviceCompilationCacheHitFastPathForTesting(std::nullopt);
+}
+
 TEST(DeviceCompilationProfilerTest, DumpCsv) {
   // DumpCsv should write one row per recorded phase sample.
   DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();

@@ -43,12 +43,24 @@ constexpr char kDeviceCompilationProfilerCsvPathEnvVar[] =
   "TF_XLA_DEVICE_COMPILATION_PROFILER_CSV_PATH";
 constexpr char kDeviceCompilationProfilerOnlyComputeEnvVar[] =
     "TF_XLA_DEVICE_COMPILATION_PROFILER_ONLY_COMPUTE";
+constexpr char kEnableCacheHitFastPathEnvVar[] =
+    "TF_XLA_DEVICE_COMPILATION_ENABLE_CACHE_HIT_FAST_PATH";
 
 std::atomic<int> g_only_compute_timing_override{-1};
+std::atomic<int> g_enable_cache_hit_fast_path_override{-1};
 
 bool ReadBoolFromEnvVar(const char* env_var_name) {
   const char* value = std::getenv(env_var_name);
   return value != nullptr && value[0] != '\0' && value[0] != '0';
+}
+
+bool ReadBoolFromEnvVarWithDefault(const char* env_var_name,
+                                   bool default_value) {
+  const char* value = std::getenv(env_var_name);
+  if (value == nullptr || value[0] == '\0') {
+    return default_value;
+  }
+  return value[0] != '0';
 }
 
 bool ShouldBeMegamorphic(int64_t compile_count, int64_t execution_count) {
@@ -293,6 +305,23 @@ bool ShouldRecordDeviceCompilationPhaseTiming(
 void SetOnlyRecordXlaCompileOpComputeTimingForTesting(
     std::optional<bool> enabled) {
   g_only_compute_timing_override.store(
+      enabled.has_value() ? (*enabled ? 1 : 0) : -1);
+}
+
+bool ShouldEnableDeviceCompilationCacheHitFastPath() {
+  const int override = g_enable_cache_hit_fast_path_override.load();
+  if (override != -1) {
+    return override == 1;
+  }
+
+  static const bool enabled = ReadBoolFromEnvVarWithDefault(
+      kEnableCacheHitFastPathEnvVar, /*default_value=*/true);
+  return enabled;
+}
+
+void SetEnableDeviceCompilationCacheHitFastPathForTesting(
+    std::optional<bool> enabled) {
+  g_enable_cache_hit_fast_path_override.store(
       enabled.has_value() ? (*enabled ? 1 : 0) : -1);
 }
 

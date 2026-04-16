@@ -1230,7 +1230,8 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
   } else {
     absl::Status status = absl::OkStatus();
     bool used_compiled_cache_hit_fast_path = false;
-    if (!use_pjrt && resources_.empty()) {
+    if (!use_pjrt && resources_.empty() &&
+        ShouldEnableDeviceCompilationCacheHitFastPath()) {
       auto compiled_cache_hit_or = TryUseCompiledLocalExecutableCacheHit(
           ctx, function_, platform_info_, constants_, inputs, profiler, &client,
           &kernel, &executable);

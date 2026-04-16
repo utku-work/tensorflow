@@ -244,6 +244,17 @@ bool ShouldRecordDeviceCompilationPhaseTiming(
 void SetOnlyRecordXlaCompileOpComputeTimingForTesting(
     std::optional<bool> enabled);
 
+// Returns true when the warm cache-hit fast path improvements are enabled.
+// This is controlled by the
+// `TF_XLA_DEVICE_COMPILATION_ENABLE_CACHE_HIT_FAST_PATH` environment variable.
+// The fast path is enabled by default and disabled when the env var is set to
+// `0`.
+bool ShouldEnableDeviceCompilationCacheHitFastPath();
+
+// Test-only override for `ShouldEnableDeviceCompilationCacheHitFastPath()`.
+void SetEnableDeviceCompilationCacheHitFastPathForTesting(
+  std::optional<bool> enabled);
+
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_COMPILER_JIT_DEVICE_COMPILATION_PROFILER_H_
