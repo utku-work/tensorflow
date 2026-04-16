@@ -47,10 +47,13 @@ constexpr char kEnableCacheHitFastPathEnvVar[] =
     "TF_XLA_DEVICE_COMPILATION_ENABLE_CACHE_HIT_FAST_PATH";
 constexpr char kEnableZeroResourceArgShortCircuitEnvVar[] =
   "TF_XLA_DEVICE_COMPILATION_ENABLE_ZERO_RESOURCE_ARG_SHORT_CIRCUIT";
+constexpr char kEnableBuildXlaCompilerArgumentsFastPathEnvVar[] =
+  "TF_XLA_DEVICE_COMPILATION_ENABLE_BUILD_XLA_COMPILER_ARGUMENTS_FAST_PATH";
 
 std::atomic<int> g_only_compute_timing_override{-1};
 std::atomic<int> g_enable_cache_hit_fast_path_override{-1};
 std::atomic<int> g_enable_zero_resource_arg_short_circuit_override{-1};
+std::atomic<int> g_enable_build_xla_compiler_arguments_fast_path_override{-1};
 
 bool ReadBoolFromEnvVar(const char* env_var_name) {
   const char* value = std::getenv(env_var_name);
@@ -342,6 +345,25 @@ bool ShouldEnableZeroResourceArgumentShortCircuit() {
 void SetEnableZeroResourceArgumentShortCircuitForTesting(
     std::optional<bool> enabled) {
   g_enable_zero_resource_arg_short_circuit_override.store(
+      enabled.has_value() ? (*enabled ? 1 : 0) : -1);
+}
+
+bool ShouldEnableBuildXlaCompilerArgumentsFastPath() {
+  const int override =
+      g_enable_build_xla_compiler_arguments_fast_path_override.load();
+  if (override != -1) {
+    return override == 1;
+  }
+
+  static const bool enabled = ReadBoolFromEnvVarWithDefault(
+      kEnableBuildXlaCompilerArgumentsFastPathEnvVar,
+      /*default_value=*/true);
+  return enabled;
+}
+
+void SetEnableBuildXlaCompilerArgumentsFastPathForTesting(
+    std::optional<bool> enabled) {
+  g_enable_build_xla_compiler_arguments_fast_path_override.store(
       enabled.has_value() ? (*enabled ? 1 : 0) : -1);
 }
 

@@ -559,6 +559,8 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
     absl::Span<const Tensor* const> inputs,
     absl::Span<VariableInfo const> variable_args, Device* device,
     const NameAttrList* function, DeviceCompilationProfiler* profiler) {
+  const bool use_fast_path =
+      ShouldEnableBuildXlaCompilerArgumentsFastPath();
   const bool record_phase_timings =
       function != nullptr && profiler != nullptr &&
       !ShouldOnlyRecordXlaCompileOpComputeTiming();
@@ -601,31 +603,45 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
         env->NowMicros() - prepare_output_vector_start_time_us;
   }
 
-  // TODO(cheshire): Avoid duplication with framework/op_kernel.h
-  DeviceContext* device_context = nullptr;
-  if (device != nullptr) {
-    TF_RETURN_IF_ERROR(device->TryGetDeviceContext(&device_context));
-    bool using_default_context = false;
-    auto cleanup = absl::MakeCleanup([&] {
-      if (device_context != nullptr && !using_default_context) {
-        device_context->Unref();
-      }
-    });
-    if (device_context == nullptr) {
-      using_default_context = true;
-      auto* dev_info = device->tensorflow_accelerator_device_info();
-      if (dev_info) device_context = dev_info->default_context;
-    }
-  }
-
   absl::flat_hash_map<int, const VariableInfo*> variable_info_lookup;
   const int64_t prepare_variable_lookup_start_time_us =
       record_phase_timings ? env->NowMicros() : 0;
-  TF_CHECK_OK(CreateVariableInfoLookup(variable_args, variable_info_lookup));
+  const bool has_variable_args = !variable_args.empty();
+  if (!use_fast_path || has_variable_args) {
+    TF_CHECK_OK(CreateVariableInfoLookup(variable_args, variable_info_lookup));
+  }
   if (record_phase_timings) {
     prepare_variable_lookup_time_us =
         env->NowMicros() - prepare_variable_lookup_start_time_us;
   }
+
+  // TODO(cheshire): Avoid duplication with framework/op_kernel.h
+  DeviceContext* device_context = nullptr;
+  bool using_default_context = false;
+  auto ensure_device_context = [&]() -> absl::Status {
+    if (device_context != nullptr || device == nullptr) {
+      return absl::OkStatus();
+    }
+    TF_RETURN_IF_ERROR(device->TryGetDeviceContext(&device_context));
+    if (device_context == nullptr) {
+      using_default_context = true;
+      auto* dev_info = device->tensorflow_accelerator_device_info();
+      if (dev_info) {
+        device_context = dev_info->default_context;
+      }
+    }
+    return absl::OkStatus();
+  };
+  auto device_context_cleanup = absl::MakeCleanup([&] {
+    if (device_context != nullptr && !using_default_context) {
+      device_context->Unref();
+    }
+  });
+  if (!use_fast_path && device != nullptr) {
+    TF_RETURN_IF_ERROR(ensure_device_context());
+  }
+
+  size_t next_constant_idx = 0;
   const int64_t setup_end_time_us = record_phase_timings ? env->NowMicros() : 0;
   for (int64_t input_num = 0; input_num < inputs.size(); ++input_num) {
     const Tensor* input = inputs[input_num];
@@ -633,16 +649,35 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
     XlaCompiler::Argument& arg = out[input_num];
     const int64_t branch_start_time_us =
         record_phase_timings ? env->NowMicros() : 0;
-    if (variable_info_lookup.count(input_num) && device != nullptr) {
+    const bool is_constant_input = [&]() {
+      if (!use_fast_path) {
+        return absl::c_binary_search(must_be_constant_idxs, input_num);
+      }
+      while (next_constant_idx < must_be_constant_idxs.size() &&
+             must_be_constant_idxs[next_constant_idx] < input_num) {
+        ++next_constant_idx;
+      }
+      return next_constant_idx < must_be_constant_idxs.size() &&
+             must_be_constant_idxs[next_constant_idx] == input_num;
+    }();
+
+    const VariableInfo* variable = nullptr;
+    if (has_variable_args) {
+      auto it = variable_info_lookup.find(input_num);
+      if (it != variable_info_lookup.end()) {
+        variable = it->second;
+      }
+    }
+
+    if (variable != nullptr && device != nullptr) {
       // Handles resource variables.
       TF_RET_CHECK(input->dtype() == DT_RESOURCE);
-      const VariableInfo& variable = *variable_info_lookup[input_num];
-      arg.name = std::string(variable.name());
+      arg.name = std::string(variable->name());
       arg.kind = XlaCompiler::Argument::kResource;
       arg.resource_kind = XlaResource::kVariable;
-      arg.definition_stack_trace = variable.definition_stack_trace();
-      if (variable.var() && variable.var()->is_initialized) {
-        const Tensor* value = variable.var()->tensor();
+      arg.definition_stack_trace = variable->definition_stack_trace();
+      if (variable->var() && variable->var()->is_initialized) {
+        const Tensor* value = variable->var()->tensor();
         arg.type = value->dtype();
         arg.shape = value->shape();
         arg.initialized = true;
@@ -656,11 +691,14 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
         arg.shape = TensorShape();
       }
 
-      if (absl::c_binary_search(must_be_constant_idxs, input_num)) {
-        TF_RET_CHECK(variable.var() && variable.var()->is_initialized);
-        const Tensor* value = variable.var()->tensor();
+      if (is_constant_input) {
+        TF_RET_CHECK(variable->var() && variable->var()->is_initialized);
+        const Tensor* value = variable->var()->tensor();
         Tensor value_on_host(value->dtype(), value->shape());
-        if (!device_context) {
+        if (use_fast_path) {
+          TF_RETURN_IF_ERROR(ensure_device_context());
+        }
+        if (device_context == nullptr) {
           value_on_host = *value;
         } else {
           TF_RETURN_IF_ERROR(device_context->CopyDeviceTensorToCPUSync(
@@ -672,7 +710,7 @@ XlaComputationLaunchContext::BuildXlaCompilerArguments(
       if (record_phase_timings) {
         resource_inputs_time_us += env->NowMicros() - branch_start_time_us;
       }
-    } else if (absl::c_binary_search(must_be_constant_idxs, input_num)) {
+    } else if (is_constant_input) {
       const int64_t populate_argument_start_time_us =
           record_phase_timings ? env->NowMicros() : 0;
       arg.kind = XlaCompiler::Argument::kConstant;

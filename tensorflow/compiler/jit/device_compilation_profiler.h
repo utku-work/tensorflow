@@ -266,6 +266,17 @@ bool ShouldEnableZeroResourceArgumentShortCircuit();
 void SetEnableZeroResourceArgumentShortCircuitForTesting(
     std::optional<bool> enabled);
 
+// Returns true when the `BuildXlaCompilerArguments` fast path is enabled. This
+// is controlled by the
+// `TF_XLA_DEVICE_COMPILATION_ENABLE_BUILD_XLA_COMPILER_ARGUMENTS_FAST_PATH`
+// environment variable. The fast path is enabled by default and disabled when
+// the env var is set to `0`.
+bool ShouldEnableBuildXlaCompilerArgumentsFastPath();
+
+// Test-only override for `ShouldEnableBuildXlaCompilerArgumentsFastPath()`.
+void SetEnableBuildXlaCompilerArgumentsFastPathForTesting(
+  std::optional<bool> enabled);
+
 }  // namespace tensorflow
 
 #endif  // TENSORFLOW_COMPILER_JIT_DEVICE_COMPILATION_PROFILER_H_

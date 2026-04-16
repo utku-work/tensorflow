@@ -191,6 +191,25 @@ TEST(DeviceCompilationProfilerTest,
   SetEnableZeroResourceArgumentShortCircuitForTesting(std::nullopt);
 }
 
+TEST(DeviceCompilationProfilerTest,
+     BuildXlaCompilerArgumentsFastPathEnabledByDefault) {
+  SetEnableBuildXlaCompilerArgumentsFastPathForTesting(std::nullopt);
+  EXPECT_TRUE(ShouldEnableBuildXlaCompilerArgumentsFastPath());
+}
+
+TEST(DeviceCompilationProfilerTest,
+     BuildXlaCompilerArgumentsFastPathTestingOverride) {
+  SetEnableBuildXlaCompilerArgumentsFastPathForTesting(
+      std::optional<bool>(false));
+  EXPECT_FALSE(ShouldEnableBuildXlaCompilerArgumentsFastPath());
+
+  SetEnableBuildXlaCompilerArgumentsFastPathForTesting(
+      std::optional<bool>(true));
+  EXPECT_TRUE(ShouldEnableBuildXlaCompilerArgumentsFastPath());
+
+  SetEnableBuildXlaCompilerArgumentsFastPathForTesting(std::nullopt);
+}
+
 TEST(DeviceCompilationProfilerTest, DumpCsv) {
   // DumpCsv should write one row per recorded phase sample.
   DeviceCompilationProfiler* profiler = new DeviceCompilationProfiler();
