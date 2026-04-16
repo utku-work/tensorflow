@@ -21,9 +21,6 @@ limitations under the License.
 #include <variant>
 
 #include "absl/algorithm/container.h"
-#include "absl/strings/str_append.h"
-#include "absl/strings/str_join.h"
-#include "tensorflow/core/platform/errors.h"
 
 namespace tensorflow {
 namespace {
