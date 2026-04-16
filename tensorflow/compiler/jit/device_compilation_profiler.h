@@ -51,6 +51,7 @@ class DeviceCompilationProfiler : public ResourceBase {
     kBuildXlaCompilerArgumentsResourceInputs,
     kBuildXlaCompilerArguments,
     kGetXlaCompilerArgsAndSnapshotVariables,
+    kLocalExecutableCacheHitFastPath,
     kCompileToLocalExecutable,
     kXlaCompileOpCompute,
   };
@@ -108,6 +109,7 @@ class DeviceCompilationProfiler : public ResourceBase {
     PhaseTimingStats build_xla_compiler_arguments_resource_inputs;
     PhaseTimingStats build_xla_compiler_arguments;
     PhaseTimingStats get_xla_compiler_args_and_snapshot_variables;
+    PhaseTimingStats local_executable_cache_hit_fast_path;
     PhaseTimingStats compile_to_local_executable;
     PhaseTimingStats xla_compile_op_compute;
     std::vector<PhaseTimingRecord> phase_timing_records;
@@ -170,6 +172,9 @@ class DeviceCompilationProfiler : public ResourceBase {
         ", ",
         get_xla_compiler_args_and_snapshot_variables.DebugString(
             "get_xla_compiler_args_and_snapshot_variables"),
+        ", ",
+        local_executable_cache_hit_fast_path.DebugString(
+          "local_executable_cache_hit_fast_path"),
         ", ",
         compile_to_local_executable.DebugString(
             "compile_to_local_executable"),

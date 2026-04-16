@@ -74,6 +74,15 @@ TEST(DeviceCompilationCacheTest, LookupOrCreateEntryDoesntExist) {
   EXPECT_EQ(cache_value.executable, nullptr);
 }
 
+TEST(DeviceCompilationCacheTest, PeekEntryDoesntExist) {
+  auto cache = std::make_unique<Cache>();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto key, BuildSampleSignature("foo"));
+  auto cache_value = cache->Peek(key);
+
+  EXPECT_FALSE(cache_value.has_value());
+}
+
 TEST(DeviceCompilationCacheTest, IncrementRequestCountOnLookup) {
   auto cache = std::make_unique<Cache>();
 
@@ -86,6 +95,21 @@ TEST(DeviceCompilationCacheTest, IncrementRequestCountOnLookup) {
 
   cache_value = cache->LookupOrCreate(key);
   EXPECT_EQ(cache_value.request_count, 3);
+}
+
+TEST(DeviceCompilationCacheTest, PeekDoesNotIncrementRequestCount) {
+  auto cache = std::make_unique<Cache>();
+
+  TF_ASSERT_OK_AND_ASSIGN(auto key, BuildSampleSignature("foo"));
+  Cache::Value cache_value = cache->LookupOrCreate(key);
+  EXPECT_EQ(cache_value.request_count, 1);
+
+  auto peek_value = cache->Peek(key);
+  ASSERT_TRUE(peek_value.has_value());
+  EXPECT_EQ(peek_value->request_count, 1);
+
+  cache_value = cache->LookupOrCreate(key);
+  EXPECT_EQ(cache_value.request_count, 2);
 }
 
 TEST(DeviceCompilationCacheTest, RequestCountUnchangedOnStore) {

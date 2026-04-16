@@ -49,6 +49,13 @@ struct DeviceCompilationClusterSignature {
   static absl::StatusOr<DeviceCompilationClusterSignature> Build(
       const NameAttrList& function,
       absl::Span<const XlaCompiler::Argument> args);
+
+  // Builds the signature for a zero-resource compilation directly from runtime
+  // inputs, avoiding temporary XlaCompiler::Argument materialization.
+  static absl::StatusOr<DeviceCompilationClusterSignature>
+  BuildForNoResourceInputs(const NameAttrList& function,
+                           absl::Span<const int> must_be_constant_idxs,
+                           absl::Span<const Tensor* const> inputs);
 };
 
 }  // namespace tensorflow

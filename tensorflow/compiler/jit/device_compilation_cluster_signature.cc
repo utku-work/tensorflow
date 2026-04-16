@@ -15,9 +15,13 @@ limitations under the License.
 
 #include "tensorflow/compiler/jit/device_compilation_cluster_signature.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <variant>
+
+#include "absl/algorithm/container.h"
+#include "tensorflow/core/platform/errors.h"
 
 namespace tensorflow {
 namespace {
@@ -134,6 +138,59 @@ absl::StatusOr<Signature> Signature::Build(
     }
   }
   return std::move(signature);
+}
+
+absl::StatusOr<Signature> Signature::BuildForNoResourceInputs(
+    const NameAttrList& function, absl::Span<const int> must_be_constant_idxs,
+    absl::Span<const Tensor* const> inputs) {
+  if (!must_be_constant_idxs.empty() &&
+      !absl::c_is_sorted(must_be_constant_idxs)) {
+    return errors::InvalidArgument("must_be_constant_idxs is not sorted");
+  }
+
+  Signature signature;
+  signature.name = Canonicalize(function.name(), AttrSlice(&function.attr()));
+  signature.args.reserve(inputs.size());
+
+  size_t constant_index_pos = 0;
+  auto consume_is_constant = [&](int64_t input_num) {
+    while (constant_index_pos < must_be_constant_idxs.size() &&
+           must_be_constant_idxs[constant_index_pos] < input_num) {
+      ++constant_index_pos;
+    }
+    const bool is_constant =
+        constant_index_pos < must_be_constant_idxs.size() &&
+        must_be_constant_idxs[constant_index_pos] == input_num;
+    if (is_constant) {
+      ++constant_index_pos;
+    }
+    return is_constant;
+  };
+
+  for (int64_t input_num = 0; input_num < inputs.size(); ++input_num) {
+    const Tensor* input = inputs[input_num];
+    if (input == nullptr) {
+      return errors::InvalidArgument("input tensor was null at index ",
+                                     input_num);
+    }
+
+    const bool is_constant = consume_is_constant(input_num);
+    if (input->dtype() == DT_RESOURCE) {
+      return errors::InvalidArgument(
+          "BuildForNoResourceInputs does not support DT_RESOURCE inputs at "
+          "index ",
+          input_num);
+    }
+
+    if (is_constant || input->NumElements() == 0) {
+      signature.args.push_back(*input);
+      continue;
+    }
+
+    signature.args.push_back(TensorTypeAndShape(
+        input->dtype(), input->shape().dim_sizes()));
+  }
+  return signature;
 }
 
 }  // namespace tensorflow

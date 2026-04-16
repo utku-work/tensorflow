@@ -94,6 +94,49 @@ TEST(DeviceCompilationClusterSignatureTest, SignatureUniqueness) {
   EXPECT_FALSE(s1 == s2);
 }
 
+TEST(DeviceCompilationClusterSignatureTest,
+     BuildForNoResourceInputsMatchesArgumentBuild) {
+  NameAttrList fn;
+  fn.set_name("afunction");
+
+  Tensor constant_tensor(DT_INT32, TensorShape({2}));
+  constant_tensor.vec<int32>()(0) = 7;
+  constant_tensor.vec<int32>()(1) = 11;
+
+  Tensor parameter_tensor(DT_FLOAT, TensorShape({3, 4}));
+  Tensor empty_tensor(DT_INT64, TensorShape({0}));
+
+  std::vector<const Tensor*> inputs = {&constant_tensor, &parameter_tensor,
+                                       &empty_tensor};
+  std::vector<int> constant_input_indices = {0};
+
+  std::vector<XlaCompiler::Argument> args(3);
+  args[0].kind = XlaCompiler::Argument::kConstant;
+  args[0].type = constant_tensor.dtype();
+  args[0].shape = constant_tensor.shape();
+  args[0].constant_value = constant_tensor;
+
+  args[1].kind = XlaCompiler::Argument::kParameter;
+  args[1].type = parameter_tensor.dtype();
+  args[1].shape = parameter_tensor.shape();
+
+  args[2].kind = XlaCompiler::Argument::kConstant;
+  args[2].type = empty_tensor.dtype();
+  args[2].shape = empty_tensor.shape();
+  args[2].constant_value = empty_tensor;
+
+  TF_ASSERT_OK_AND_ASSIGN(DeviceCompilationClusterSignature from_args,
+                          DeviceCompilationClusterSignature::Build(fn, args));
+  TF_ASSERT_OK_AND_ASSIGN(
+      DeviceCompilationClusterSignature from_inputs,
+      DeviceCompilationClusterSignature::BuildForNoResourceInputs(
+          fn, constant_input_indices, inputs));
+
+  EXPECT_EQ(from_args.HumanString(), from_inputs.HumanString());
+  EXPECT_EQ(SignatureHash()(from_args), SignatureHash()(from_inputs));
+  EXPECT_TRUE(from_args == from_inputs);
+}
+
 void BM_BuildSignature(::testing::benchmark::State& state) {
   const int n_args = state.range(0);
 
