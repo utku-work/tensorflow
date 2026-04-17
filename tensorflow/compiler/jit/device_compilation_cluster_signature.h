@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
+#include "absl/types/span.h"
 #include "tensorflow/compiler/tf2xla/xla_compiler.h"
 
 namespace tensorflow {
@@ -49,6 +50,13 @@ struct DeviceCompilationClusterSignature {
   static absl::StatusOr<DeviceCompilationClusterSignature> Build(
       const NameAttrList& function,
       absl::Span<const XlaCompiler::Argument> args);
+
+  // Builds the signature directly from runtime inputs when none of the inputs
+  // are resource tensors. `must_be_constant_idxs` must be sorted.
+  static absl::StatusOr<DeviceCompilationClusterSignature>
+  BuildForNoResourceInputs(const NameAttrList& function,
+                           absl::Span<const Tensor* const> inputs,
+                           absl::Span<const int> must_be_constant_idxs);
 };
 
 }  // namespace tensorflow

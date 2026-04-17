@@ -15,14 +15,21 @@ limitations under the License.
 
 #include "tensorflow/compiler/jit/device_compilation_cluster_signature.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <variant>
+
+#include "tensorflow/core/platform/errors.h"
 
 namespace tensorflow {
 namespace {
 using Signature = DeviceCompilationClusterSignature;
 using TensorTypeAndShape = Signature::TensorTypeAndShape;
+
+TensorTypeAndShape TensorSignatureTypeAndShape(const Tensor& tensor) {
+  return TensorTypeAndShape(tensor.dtype(), tensor.shape().dim_sizes());
+}
 
 // Functor that converts a Signature's arg to a human readable string.
 struct SignatureHumanStringAppender {
@@ -134,6 +141,55 @@ absl::StatusOr<Signature> Signature::Build(
     }
   }
   return std::move(signature);
+}
+
+absl::StatusOr<Signature> Signature::BuildForNoResourceInputs(
+    const NameAttrList& function, absl::Span<const Tensor* const> inputs,
+    absl::Span<const int> must_be_constant_idxs) {
+  if (!std::is_sorted(must_be_constant_idxs.begin(),
+                      must_be_constant_idxs.end())) {
+    return errors::InvalidArgument("must_be_constant_idxs is not sorted");
+  }
+
+  Signature signature;
+  signature.name = Canonicalize(function.name(), AttrSlice(&function.attr()));
+  signature.args.reserve(inputs.size());
+
+  size_t constant_index_pos = 0;
+  auto is_constant_input = [&](int64_t input_num) {
+    while (constant_index_pos < must_be_constant_idxs.size() &&
+           must_be_constant_idxs[constant_index_pos] < input_num) {
+      ++constant_index_pos;
+    }
+    if (constant_index_pos < must_be_constant_idxs.size() &&
+        must_be_constant_idxs[constant_index_pos] == input_num) {
+      ++constant_index_pos;
+      return true;
+    }
+    return false;
+  };
+
+  for (int64_t input_num = 0; input_num < inputs.size(); ++input_num) {
+    const Tensor* input = inputs[input_num];
+    if (input == nullptr) {
+      return errors::InvalidArgument("input tensor was null at index ",
+                                     input_num);
+    }
+    if (input->dtype() == DT_RESOURCE) {
+      return errors::InvalidArgument(
+          "BuildForNoResourceInputs does not support DT_RESOURCE inputs at "
+          "index ",
+          input_num);
+    }
+
+    if (is_constant_input(input_num) || input->NumElements() == 0) {
+      signature.args.push_back(*input);
+    } else {
+      signature.args.push_back(TensorSignatureTypeAndShape(*input));
+    }
+  }
+
+  return signature;
 }
 
 }  // namespace tensorflow

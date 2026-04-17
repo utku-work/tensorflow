@@ -50,6 +50,7 @@ cc_library(
     srcs = ["xla_ops.cc"],
     hdrs = ["xla_ops.h"],
     deps = XLA_OPS_DEPS + [
+        "//tensorflow/compiler/jit:device_compilation_cluster_signature",
         "//tensorflow/compiler/jit:device_compilation_cache",
         "//tensorflow/compiler/jit:device_compilation_profiler",
         "//tensorflow/compiler/jit:pjrt_compile_util",
@@ -59,6 +60,7 @@ cc_library(
         "//tensorflow/compiler/jit:xla_batch_matcher",
         "//tensorflow/core:protos_all_cc",
         "//tensorflow/core/platform:refcount",
+        "//tensorflow/core/util:env_var",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:node_hash_map",
         "@com_google_absl//absl/log",

@@ -39,6 +39,7 @@ limitations under the License.
 #include "absl/strings/string_view.h"
 #include "absl/synchronization/mutex.h"
 #include "absl/types/span.h"
+#include "tensorflow/compiler/jit/device_compilation_cluster_signature.h"
 #include "tensorflow/compiler/jit/device_compilation_profiler.h"
 #include "tensorflow/compiler/jit/device_compiler.h"
 #include "tensorflow/compiler/jit/encapsulate_subgraphs_pass.h"
@@ -82,6 +83,7 @@ limitations under the License.
 #include "tensorflow/core/platform/refcount.h"
 #include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/platform/stream_executor_no_cuda.h"
+#include "tensorflow/core/util/env_var.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/core/util/stream_executor_util.h"
 #include "tsl/platform/statusor.h"
@@ -108,6 +110,19 @@ using PjRtDeviceCompiler =
 auto* xla_launch_counter = monitoring::Counter<1>::New(
     "/tensorflow/core/xla_launch_counter",
     "The number of times a XlaLaunch is called.", "device");
+
+constexpr char kEnableCacheHitFastPathEnvVar[] =
+    "TF_XLA_DEVICE_COMPILATION_ENABLE_CACHE_HIT_FAST_PATH";
+
+bool ShouldEnableDeviceCompilationCacheHitFastPath() {
+  static const bool enabled = [] {
+    bool value = true;
+    TF_CHECK_OK(ReadBoolFromEnvVar(kEnableCacheHitFastPathEnvVar,
+                                   /*default_val=*/true, &value));
+    return value;
+  }();
+  return enabled;
+}
 
 // A closure describing how to run a compiled version of a TensorFlow function.
 //
@@ -722,6 +737,58 @@ absl::Status CompileToLocalExecutable(
   }
 }
 
+absl::StatusOr<bool> TryUseCompiledLocalExecutableCacheHit(
+    OpKernelContext* ctx, const NameAttrList& function,
+    const XlaPlatformInfo& platform_info,
+    absl::Span<const int> must_be_constant_idxs,
+    absl::Span<const Tensor* const> inputs, xla::LocalClient** client,
+    const XlaCompiler::CompilationResult** compilation_result,
+    xla::LocalExecutable** executable) {
+  ResourceMgr* rm = ctx->resource_manager();
+  if (rm == nullptr) {
+    return absl::InternalError("No resource manager.");
+  }
+
+  TF_ASSIGN_OR_RETURN(
+      DeviceCompilationClusterSignature signature,
+      DeviceCompilationClusterSignature::BuildForNoResourceInputs(
+          function, inputs, must_be_constant_idxs));
+
+  TF_ASSIGN_OR_RETURN(DeviceType compilation_device_type,
+                      GetCompilationDeviceType(platform_info.device_type()));
+
+  XlaDeviceCompiler* xla_device_compiler;
+  TF_RETURN_IF_ERROR(rm->LookupOrCreate<XlaDeviceCompiler>(
+      rm->default_container(), "xla_device_compiler", &xla_device_compiler,
+      [&](XlaDeviceCompiler** xla_device_compiler) {
+        return BuildXlaDeviceCompiler(ctx->device(), ctx->function_library(),
+                                      platform_info, compilation_device_type,
+                                      xla_device_compiler);
+      }));
+  DeviceCompilationProfiler* profiler;
+  TF_RETURN_IF_ERROR(rm->LookupOrCreate<DeviceCompilationProfiler>(
+      rm->default_container(), "device_compilation_profiler", &profiler,
+      [](DeviceCompilationProfiler** profiler) {
+        *profiler = new DeviceCompilationProfiler();
+        return absl::OkStatus();
+      }));
+  core::ScopedUnref xla_device_compiler_ref(xla_device_compiler);
+  core::ScopedUnref profiler_ref(profiler);
+
+  auto cache_value = xla_device_compiler->cache()->Peek(signature);
+  if (!cache_value.has_value() ||
+      cache_value->compile_state != DeviceCompileState::kCompiled) {
+    return false;
+  }
+
+  TF_RETURN_IF_ERROR(cache_value->compilation_status);
+  *client = static_cast<xla::LocalClient*>(xla_device_compiler->client());
+  *compilation_result = cache_value->compilation_result;
+  *executable = cache_value->executable;
+  profiler->RegisterExecution(function);
+  return true;
+}
+
 absl::Status GetUpdatedVariables(
     const OpKernelContext* ctx, absl::Span<const Tensor* const> inputs,
     absl::Span<const int> variable_indices,
@@ -1070,27 +1137,42 @@ void XlaCompileOp::Compute(OpKernelContext* ctx) {
       cannot_compile_cluster) {
     executable = nullptr;
   } else {
-    auto args_and_variables_snapshot = GetXlaCompilerArgsAndSnapshotVariables(
-        resources_, constants_, inputs, ctx);
-    OP_REQUIRES_OK(ctx, args_and_variables_snapshot.status());
-    const std::vector<XlaCompiler::Argument>& args =
-        args_and_variables_snapshot->first;
-    variables_snapshot = std::move(args_and_variables_snapshot->second);
+    absl::Status status = absl::OkStatus();
+    bool used_compiled_cache_hit_fast_path = false;
+    if (!use_pjrt && resources_.empty() &&
+        ShouldEnableDeviceCompilationCacheHitFastPath()) {
+      auto compiled_cache_hit_or = TryUseCompiledLocalExecutableCacheHit(
+          ctx, function_, platform_info_, constants_, inputs, &client, &kernel,
+          &executable);
+      OP_REQUIRES_OK(ctx, compiled_cache_hit_or.status());
+      used_compiled_cache_hit_fast_path = *compiled_cache_hit_or;
+    }
 
-    // Do not alias resource updates as locking variables in XlaCompile and
-    // unlocking them in XlaRun may lead to deadlocks.
-    absl::Status status;
-    if (use_pjrt) {
-      VLOG(2) << "Using PJRT for compilation. Function name: "
-              << function_.name();
-      status = CompileToPjRtLoadedExecutable(
-          *ctx, platform_info_, function_, args, compile_mode, has_ref_vars_,
-          /*may_alias_resource_update=*/false, &kernel, &pjrt_client,
-          &pjrt_executable);
+    if (used_compiled_cache_hit_fast_path) {
+      variables_snapshot.clear();
     } else {
-      status = CompileToLocalExecutable(
-          ctx, function_, has_ref_vars_, platform_info_, args, compile_mode,
-          /*may_alias_resource_update=*/false, &client, &kernel, &executable);
+      auto args_and_variables_snapshot = GetXlaCompilerArgsAndSnapshotVariables(
+          resources_, constants_, inputs, ctx);
+      OP_REQUIRES_OK(ctx, args_and_variables_snapshot.status());
+      const std::vector<XlaCompiler::Argument>& args =
+          args_and_variables_snapshot->first;
+      variables_snapshot = std::move(args_and_variables_snapshot->second);
+
+      // Do not alias resource updates as locking variables in XlaCompile and
+      // unlocking them in XlaRun may lead to deadlocks.
+      if (use_pjrt) {
+        VLOG(2) << "Using PJRT for compilation. Function name: "
+                << function_.name();
+        status = CompileToPjRtLoadedExecutable(
+            *ctx, platform_info_, function_, args, compile_mode, has_ref_vars_,
+            /*may_alias_resource_update=*/false, &kernel, &pjrt_client,
+            &pjrt_executable);
+      } else {
+        status = CompileToLocalExecutable(
+            ctx, function_, has_ref_vars_, platform_info_, args, compile_mode,
+            /*may_alias_resource_update=*/false, &client, &kernel,
+            &executable);
+      }
     }
 
     if (compile_mode != DeviceCompileMode::kLazy ||
