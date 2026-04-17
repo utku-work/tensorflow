@@ -115,14 +115,11 @@ constexpr char kEnableCacheHitFastPathEnvVar[] =
     "TF_XLA_DEVICE_COMPILATION_ENABLE_CACHE_HIT_FAST_PATH";
 
 bool ShouldEnableDeviceCompilationCacheHitFastPath() {
-  static const bool enabled = [] {
-    const char* value = std::getenv(kEnableCacheHitFastPathEnvVar);
-    if (value == nullptr || value[0] == '\0') {
-      return true;
-    }
-    return value[0] != '0';
-  }();
-  return enabled;
+  const char* value = std::getenv(kEnableCacheHitFastPathEnvVar);
+  if (value == nullptr || value[0] == '\0') {
+    return true;
+  }
+  return value[0] != '0';
 }
 
 // A closure describing how to run a compiled version of a TensorFlow function.
