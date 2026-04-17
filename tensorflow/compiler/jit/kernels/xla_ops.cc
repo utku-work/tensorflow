@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "tensorflow/compiler/jit/kernels/xla_ops.h"
 
+#include <cstdlib>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -83,7 +84,6 @@ limitations under the License.
 #include "tensorflow/core/platform/refcount.h"
 #include "tensorflow/core/platform/statusor.h"
 #include "tensorflow/core/platform/stream_executor_no_cuda.h"
-#include "tensorflow/core/util/env_var.h"
 #include "tensorflow/core/profiler/lib/traceme.h"
 #include "tensorflow/core/util/stream_executor_util.h"
 #include "tsl/platform/statusor.h"
@@ -116,10 +116,11 @@ constexpr char kEnableCacheHitFastPathEnvVar[] =
 
 bool ShouldEnableDeviceCompilationCacheHitFastPath() {
   static const bool enabled = [] {
-    bool value = true;
-    TF_CHECK_OK(ReadBoolFromEnvVar(kEnableCacheHitFastPathEnvVar,
-                                   /*default_val=*/true, &value));
-    return value;
+    const char* value = std::getenv(kEnableCacheHitFastPathEnvVar);
+    if (value == nullptr || value[0] == '\0') {
+      return true;
+    }
+    return value[0] != '0';
   }();
   return enabled;
 }
