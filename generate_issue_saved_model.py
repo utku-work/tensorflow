@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -43,6 +44,13 @@ HISTORY_SPECS = (
     ("search", 14, 5),
 )
 INIT_OP_SIGNATURE_KEY = "__saved_model_init_op"
+REAL_CLUSTER2_HLO = "module_9287.cluster_2__XlaCompiledKernel_true__XlaHasReferenceVars_true__XlaNumConstantArgs_48__XlaNumResourceArgs_55_.2025.before_optimizations.txt"
+HLO_DTYPE_MAP = {
+    "f32": tf.float32,
+    "s32": tf.int32,
+    "s64": tf.int64,
+    "pred": tf.bool,
+}
 
 
 def swish(value: tf.Tensor) -> tf.Tensor:
@@ -247,8 +255,9 @@ class Cluster2IssueModel(tf.Module):
     def _task_outputs(self, features: tf.Tensor, selected_experts: tf.Tensor) -> tf.Tensor:
         task_outputs = []
         for task_id in range(3):
-            gate = tf.nn.softmax(tf.matmul(features, self.gate_w[task_id]) + self.gate_b[task_id], axis=-1)
-            mixed = tf.einsum("be,ber->br", gate, selected_experts)
+            with tf.name_scope(f"common_MoE_gate_{task_id}"):
+                gate = tf.nn.softmax(tf.matmul(features, self.gate_w[task_id]) + self.gate_b[task_id], axis=-1, name="Softmax")
+                mixed = tf.einsum("be,ber->br", gate, selected_experts)
             tower = swish(tf.matmul(mixed, self.tower_w1[task_id]) + self.tower_b1[task_id])
             task_outputs.append(tf.matmul(tower, self.tower_w2[task_id]) + self.tower_b2[task_id])
         return tf.concat(task_outputs, axis=1)
@@ -258,8 +267,9 @@ class Cluster2IssueModel(tf.Module):
         gate_logits = tf.split(packed_gate_logits, 3, axis=1)
         task_outputs = []
         for task_id in range(3):
-            gate = tf.nn.softmax(gate_logits[task_id], axis=-1)
-            mixed = tf.einsum("be,ber->br", gate, selected_experts)
+            with tf.name_scope(f"common_MoE_gate_{task_id}"):
+                gate = tf.nn.softmax(gate_logits[task_id], axis=-1, name="Softmax")
+                mixed = tf.einsum("be,ber->br", gate, selected_experts)
             tower = swish(tf.matmul(mixed, self.tower_w1[task_id]) + self.tower_b1[task_id])
             task_outputs.append(tf.matmul(tower, self.tower_w2[task_id]) + self.tower_b2[task_id])
         return tf.concat(task_outputs, axis=1)
@@ -309,13 +319,224 @@ class Cluster2IssueModel(tf.Module):
         )
         selected_experts, task_outputs = self._packed_moe(features) if self.packed_moe else self._bad_moe(features)
         return {
-            "mmoe_input": features,
-            "selected_experts": selected_experts,
-            "task_0": task_outputs[:, 0:1],
-            "task_1": task_outputs[:, 1:2],
-            "task_2": task_outputs[:, 2:3],
-            "class_ids": tf.zeros([self.batch_size, 1], dtype=tf.int32),
-            "rank_ids": tf.ones([self.batch_size, 1], dtype=tf.int32),
+            "out_0_mmoe_input": features,
+            "out_1_selected_experts": selected_experts,
+            "out_2_class_ids": tf.zeros([self.batch_size, 1], dtype=tf.int32),
+            "out_3_rank_ids": tf.ones([self.batch_size, 1], dtype=tf.int32),
+            "out_4_task_0": task_outputs[:, 0:1],
+            "out_5_task_1": task_outputs[:, 1:2],
+            "out_6_task_2": task_outputs[:, 2:3],
+        }
+
+
+def default_real_hlo_path() -> Path:
+    return Path(__file__).resolve().parent.parent / REAL_CLUSTER2_HLO
+
+
+def parse_hlo_entry_specs(hlo_path: Path) -> list[tf.TensorSpec]:
+    text = hlo_path.read_text()
+    entry_index = text.find("ENTRY %")
+    if entry_index < 0:
+        raise ValueError(f"No ENTRY computation found in {hlo_path}")
+    open_paren = text.find("(", entry_index)
+    close_paren = text.find(") ->", open_paren)
+    if open_paren < 0 or close_paren < 0:
+        raise ValueError(f"Could not parse ENTRY argument list in {hlo_path}")
+    entry_args = text[open_paren + 1 : close_paren]
+    specs: list[tf.TensorSpec] = []
+    for match in re.finditer(r"arg(\d+)\.\d+:\s+([a-z0-9]+)\[([^\]]*)\]", entry_args):
+        arg_index = int(match.group(1))
+        hlo_dtype = match.group(2)
+        shape_text = match.group(3)
+        if arg_index != len(specs):
+            raise ValueError(f"Expected arg{len(specs)} but found arg{arg_index} in {hlo_path}")
+        if hlo_dtype not in HLO_DTYPE_MAP:
+            raise ValueError(f"Unsupported HLO dtype {hlo_dtype!r} in {hlo_path}")
+        shape = [] if not shape_text else [int(part) for part in shape_text.split(",")]
+        specs.append(tf.TensorSpec(shape, HLO_DTYPE_MAP[hlo_dtype], name=f"arg{arg_index}"))
+    if len(specs) != 233:
+        raise ValueError(f"Expected 233 ENTRY args from real cluster_2, parsed {len(specs)} from {hlo_path}")
+    return specs
+
+
+class RealCluster2EntryTemplate(tf.Module):
+    """HLO-entry-shaped template using the real cluster_2 argument contract."""
+
+    def __init__(self, input_specs: list[tf.TensorSpec]) -> None:
+        super().__init__()
+        self.serve = tf.function(
+            self._serve,
+            jit_compile=True,
+            input_signature=input_specs,
+        ).get_concrete_function()
+
+    def _safe_gather(self, table: tf.Tensor, indices: tf.Tensor, *, name: str) -> tf.Tensor:
+        row_count = tf.constant(table.shape.as_list()[0], dtype=indices.dtype)
+        safe_indices = tf.math.floormod(indices, row_count)
+        return tf.gather(table, safe_indices, name=name)
+
+    def _batch_tile(self, value: tf.Tensor) -> tf.Tensor:
+        flat = tf.reshape(tf.cast(value, tf.float32), [1, -1])
+        return tf.tile(flat, [63, 1])
+
+    def _reduce_to_batch_feature(self, value: tf.Tensor) -> tf.Tensor:
+        rank = value.shape.rank
+        if rank is None:
+            value = tf.reshape(value, [-1, value.shape.as_list()[-1]])
+            reduced = tf.reduce_mean(value, axis=0)
+        elif rank <= 1:
+            reduced = value
+        else:
+            reduced = tf.reduce_mean(tf.cast(value, tf.float32), axis=list(range(rank - 1)))
+        return self._batch_tile(reduced)
+
+    def _scatter_session_ids(
+        self,
+        indices: tf.Tensor,
+        updates: tf.Tensor,
+        max_len: int,
+        history_name: str,
+    ) -> tf.Tensor:
+        with tf.name_scope(f"serve_prep/history_{history_name}_session_generator"):
+            shifted_updates = tf.cast(updates, tf.int64) + tf.constant(1, dtype=tf.int64)
+            return tf.scatter_nd(
+                indices,
+                shifted_updates,
+                [1, max_len],
+                name="act_idx",
+            )
+
+    def _session_feature(
+        self,
+        table: tf.Tensor,
+        session_ids: tf.Tensor,
+        history_name: str,
+    ) -> tf.Tensor:
+        gather_ids = tf.maximum(session_ids - tf.constant(1, dtype=session_ids.dtype), tf.constant(0, dtype=session_ids.dtype))
+        session_emb = self._safe_gather(table, gather_ids, name=f"model/history_{history_name}_din/act_padding_session")
+        mask = tf.cast(session_ids > 0, tf.float32)[..., tf.newaxis]
+        return self._reduce_to_batch_feature(session_emb * mask)
+
+    def _indexed_feature(self, table: tf.Tensor, indices: tf.Tensor, name: str) -> tf.Tensor:
+        gathered = self._safe_gather(table, indices, name=name)
+        if gathered.shape.rank == 2 and gathered.shape.as_list()[0] == 63:
+            return tf.cast(gathered, tf.float32)
+        return self._reduce_to_batch_feature(gathered)
+
+    def _fit_features(self, parts: list[tf.Tensor], touch: tf.Tensor) -> tf.Tensor:
+        features = tf.concat(parts, axis=1)
+        width = features.shape.as_list()[1]
+        if width is None:
+            features = features[:, :1316]
+        elif width < 1316:
+            features = tf.concat([features, tf.zeros([63, 1316 - width], dtype=tf.float32)], axis=1)
+        elif width > 1316:
+            features = features[:, :1316]
+        return features + touch
+
+    def _touch_all_args(self, entry_args: tuple[tf.Tensor, ...]) -> tf.Tensor:
+        touch = tf.constant(0.0, dtype=tf.float32)
+        for tensor in entry_args:
+            first_value = tf.reshape(tf.cast(tensor, tf.float32), [-1])[0]
+            touch = touch + first_value * tf.constant(1.0e-12, dtype=tf.float32)
+        return touch
+
+    def _extra_gather_touch(self, args: tuple[tf.Tensor, ...]) -> tf.Tensor:
+        pairs = [
+            (102, 103), (102, 104), (108, 109), (110, 111), (112, 113), (120, 145),
+            (121, 115), (122, 117), (123, 119), (124, 100), (125, 99), (126, 158),
+            (127, 160), (128, 98), (129, 158), (130, 159), (131, 160), (136, 157),
+            (137, 138), (139, 140), (141, 142), (143, 144), (149, 150), (151, 152),
+            (153, 154), (155, 156), (178, 113), (179, 113), (180, 113), (137, 132),
+            (139, 133), (141, 134), (143, 135), (120, 146),
+        ]
+        touch = tf.constant(0.0, dtype=tf.float32)
+        for index, (table_arg, index_arg) in enumerate(pairs):
+            with tf.name_scope(f"model/extra_gather_fanout_{index}"):
+                offset = tf.cast(index, args[index_arg].dtype)
+                gathered = self._safe_gather(args[table_arg], args[index_arg] + offset, name="GatherV2")
+                touch = touch + tf.reduce_sum(tf.cast(gathered, tf.float32)) * tf.constant(1.0e-12, dtype=tf.float32)
+        return touch
+
+    def _extra_dot_touch(self, args: tuple[tf.Tensor, ...]) -> tf.Tensor:
+        touch = tf.constant(0.0, dtype=tf.float32)
+        for index in range(30):
+            lhs = tf.cast(args[index], tf.float32)
+            rhs = tf.cast(args[index + 1], tf.float32)
+            shared_dim = min(lhs.shape.as_list()[0], rhs.shape.as_list()[0])
+            with tf.name_scope(f"model/extra_dot_fanout_{index}"):
+                dot = tf.matmul(tf.transpose(lhs[:shared_dim, :]), rhs[:shared_dim, :], name="MatMul")
+                touch = touch + tf.reduce_sum(dot) * tf.constant(1.0e-12, dtype=tf.float32)
+        return touch
+
+    def _features(self, entry_args: tuple[tf.Tensor, ...], touch: tf.Tensor) -> tf.Tensor:
+        args = entry_args
+        click_ids = self._scatter_session_ids(args[114], args[115], 45, "click")
+        search_ids = self._scatter_session_ids(args[116], args[117], 14, "search")
+        noware_ids = self._scatter_session_ids(args[118], args[119], 57, "noware")
+
+        parts = [
+            tf.reshape(args[96], [63, 1]),
+            tf.cast(args[97], tf.float32),
+            self._indexed_feature(args[102], args[104], "model/BuildCommonEmbInput/domain_emb_lookup/EmbeddingLookupUnique/GatherV2"),
+            self._indexed_feature(args[137], args[138], "model/iF_iic/huge_act_emb_lookup/GatherV2"),
+            self._indexed_feature(args[139], args[140], "model/iC_iic/huge_act_emb_lookup/GatherV2"),
+            self._indexed_feature(args[141], args[142], "model/iR_iic/huge_act_emb_lookup/GatherV2"),
+            self._indexed_feature(args[143], args[144], "model/history_huge_act_emb_lookup/GatherV2"),
+            self._session_feature(args[137], click_ids, "click"),
+            self._session_feature(args[139], noware_ids, "noware"),
+            self._session_feature(args[141], search_ids, "search"),
+            self._indexed_feature(args[108], args[109], "model/click/click_freq_emb_lookup/EmbeddingLookupUnique/GatherV2"),
+            self._indexed_feature(args[110], args[111], "model/search/search_freq_emb_lookup/EmbeddingLookupUnique/GatherV2"),
+            self._indexed_feature(args[112], args[113], "model/noware/noware_freq_emb_lookup/EmbeddingLookupUnique/GatherV2"),
+            self._indexed_feature(args[120], args[145], "model/BuildCommonEmbInput/GatherV2"),
+            self._indexed_feature(args[149], args[150], "model/de/de_time_emb_lookup/EmbeddingLookupUnique/GatherV2"),
+            self._indexed_feature(args[151], args[152], "model/iF_iic/iF_iic_time_emb_lookup/EmbeddingLookupUnique/GatherV2"),
+            self._indexed_feature(args[153], args[154], "model/iC_iic/iC_iic_time_emb_lookup/EmbeddingLookupUnique/GatherV2"),
+            self._indexed_feature(args[155], args[156], "model/iR_iic/iR_iic_time_emb_lookup/EmbeddingLookupUnique/GatherV2"),
+        ]
+        for arg_index in range(96):
+            parts.append(self._reduce_to_batch_feature(args[arg_index]))
+        return self._fit_features(parts, touch)
+
+    def _moe(self, features: tf.Tensor, args: tuple[tf.Tensor, ...]) -> tuple[tf.Tensor, tf.Tensor]:
+        with tf.name_scope("model/common_MoE"):
+            padded_features = tf.concat([features, tf.zeros([63, 224], dtype=tf.float32)], axis=1)
+            hidden_base = swish(tf.matmul(padded_features, args[161]) + args[162])
+            expert_outputs = []
+            for expert_id, weight_arg in enumerate((166, 167, 168)):
+                hidden = hidden_base + tf.reshape(args[181 + expert_id], [1, 64])
+                expert = swish(tf.matmul(hidden, tf.transpose(args[weight_arg])))
+                expert_outputs.append(expert)
+            stacked_experts = tf.stack(expert_outputs, axis=1, name="stack")
+            selected_experts = tf.gather(stacked_experts, tf.constant([0, 1], dtype=tf.int32), axis=1, name="GatherV2_3")
+
+            task_outputs = []
+            for task_id, gate_arg in enumerate((163, 164, 165)):
+                with tf.name_scope(f"common_MoE_gate_{task_id}"):
+                    gate = tf.nn.softmax(tf.matmul(features, args[gate_arg]), axis=-1, name="Softmax")
+                    mixed = tf.einsum("be,ber->br", gate, selected_experts)
+                tower = swish(tf.matmul(mixed, args[166 + task_id]) + args[169 + task_id])
+                if task_id == 0:
+                    task_outputs.append(tf.matmul(tower, args[173]) + args[176])
+                elif task_id == 1:
+                    task_outputs.append(tf.matmul(tower, args[174]) + args[177])
+                else:
+                    task_outputs.append((tf.matmul(tower, args[172]) + args[175])[:, 0:1])
+            return selected_experts, tf.concat(task_outputs, axis=1)
+
+    def _serve(self, *entry_args: tf.Tensor) -> dict[str, tf.Tensor]:
+        touch = self._touch_all_args(entry_args) + self._extra_gather_touch(entry_args) + self._extra_dot_touch(entry_args)
+        features = self._features(entry_args, touch)
+        selected_experts, task_outputs = self._moe(features, entry_args)
+        return {
+            "out_0_mmoe_input": features,
+            "out_1_selected_experts": selected_experts,
+            "out_2_class_ids": tf.cast(entry_args[97], tf.int32),
+            "out_3_rank_ids": tf.reshape(tf.cast(entry_args[104], tf.int32), [63, 1]),
+            "out_4_task_0": task_outputs[:, 0:1],
+            "out_5_task_1": task_outputs[:, 1:2],
+            "out_6_task_2": task_outputs[:, 2:3],
         }
 
 
@@ -334,25 +555,76 @@ def make_example_inputs(*, table_rows: int, batch_size: int, sparse_width: int, 
     return inputs
 
 
+def resolve_real_hlo_path(path_text: str) -> Path:
+    path = Path(path_text)
+    if path.exists():
+        return path.resolve()
+    fallback = default_real_hlo_path()
+    if path_text == REAL_CLUSTER2_HLO and fallback.exists():
+        return fallback
+    raise FileNotFoundError(f"Could not find real HLO file {path_text!r}; also tried {fallback}")
+
+
+def _sequential_indices(shape: tf.TensorShape, dtype: tf.dtypes.DType) -> tf.Tensor:
+    element_count = 1
+    for dim in shape.as_list():
+        element_count *= dim
+    return tf.reshape(tf.range(element_count, dtype=dtype), shape.as_list())
+
+
+def _scatter_indices(update_count: int, max_len: int) -> tf.Tensor:
+    rows = tf.zeros([update_count], dtype=tf.int64)
+    cols = tf.range(update_count, dtype=tf.int64) % tf.constant(max_len, dtype=tf.int64)
+    return tf.stack([rows, cols], axis=1)
+
+
+def make_real_entry_inputs(input_specs: list[tf.TensorSpec]) -> dict[str, tf.Tensor]:
+    inputs: dict[str, tf.Tensor] = {}
+    for index, spec in enumerate(input_specs):
+        shape = tf.TensorShape(spec.shape)
+        if spec.dtype == tf.float32:
+            inputs[f"arg{index}"] = tf.zeros(shape, dtype=tf.float32)
+        elif spec.dtype in (tf.int32, tf.int64):
+            inputs[f"arg{index}"] = _sequential_indices(shape, spec.dtype)
+        elif spec.dtype == tf.bool:
+            inputs[f"arg{index}"] = tf.zeros(shape, dtype=tf.bool)
+        else:
+            raise ValueError(f"Unsupported input dtype {spec.dtype.name!r} for arg{index}")
+
+    inputs["arg114"] = _scatter_indices(44, 45)
+    inputs["arg115"] = tf.range(44, dtype=tf.int32)
+    inputs["arg116"] = _scatter_indices(13, 14)
+    inputs["arg117"] = tf.range(13, dtype=tf.int32)
+    inputs["arg118"] = _scatter_indices(56, 57)
+    inputs["arg119"] = tf.range(56, dtype=tf.int32)
+    return inputs
+
+
 def export_saved_model(args: argparse.Namespace) -> Path:
     export_dir = Path(args.export_dir).resolve()
     if export_dir.exists() and args.clean:
         shutil.rmtree(export_dir)
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    model = Cluster2IssueModel(
-        table_rows=args.table_rows,
-        batch_size=args.batch_size,
-        sparse_width=args.sparse_width,
-        feature_dim=args.feature_dim,
-        chunk_count=args.chunks,
-        hidden_dim=args.hidden_dim,
-        expert_dim=args.expert_dim,
-        tower_dim=args.tower_dim,
-        packed_moe=args.packed_moe,
-        dense_sessions=args.dense_sessions,
-    )
-    tf.saved_model.save(model, str(export_dir), signatures={"serving_default": model.serve})
+    if args.real_entry_template:
+        input_specs = parse_hlo_entry_specs(resolve_real_hlo_path(args.real_hlo))
+        model = RealCluster2EntryTemplate(input_specs)
+        signature = model.serve
+    else:
+        model = Cluster2IssueModel(
+            table_rows=args.table_rows,
+            batch_size=args.batch_size,
+            sparse_width=args.sparse_width,
+            feature_dim=args.feature_dim,
+            chunk_count=args.chunks,
+            hidden_dim=args.hidden_dim,
+            expert_dim=args.expert_dim,
+            tower_dim=args.tower_dim,
+            packed_moe=args.packed_moe,
+            dense_sessions=args.dense_sessions,
+        )
+        signature = model.serve
+    tf.saved_model.save(model, str(export_dir), signatures={"serving_default": signature})
     if args.strip_init_signature:
         strip_init_signature(export_dir)
     return export_dir
@@ -375,12 +647,15 @@ def strip_init_signature(export_dir: Path) -> bool:
 def invoke_saved_model(args: argparse.Namespace) -> dict[str, object]:
     loaded = tf.saved_model.load(str(Path(args.export_dir).resolve()))
     signature = loaded.signatures["serving_default"]
-    inputs = make_example_inputs(
-        table_rows=args.table_rows,
-        batch_size=args.batch_size,
-        sparse_width=args.sparse_width,
-        base_dim=args.feature_dim - (4 * 4 + len(HISTORY_SPECS) * 4),
-    )
+    if args.real_entry_template:
+        inputs = make_real_entry_inputs(parse_hlo_entry_specs(resolve_real_hlo_path(args.real_hlo)))
+    else:
+        inputs = make_example_inputs(
+            table_rows=args.table_rows,
+            batch_size=args.batch_size,
+            sparse_width=args.sparse_width,
+            base_dim=args.feature_dim - (4 * 4 + len(HISTORY_SPECS) * 4),
+        )
     outputs = signature(**inputs)
     return {
         name: {
@@ -406,6 +681,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--export-dir", default="xla_issue_lab/saved_models/cluster2_issue/1")
     parser.add_argument("--table-rows", type=int, default=200_000)
     parser.add_argument("--real-table-size", action="store_true", help="Use f32[8388609,4] tables like the real dump")
+    parser.add_argument("--real-entry-template", action="store_true", help="Export a 233-input template parsed from the real cluster_2 HLO ENTRY signature")
+    parser.add_argument("--real-hlo", default=REAL_CLUSTER2_HLO, help="Real cluster_2 before_optimizations HLO used for --real-entry-template")
     parser.add_argument("--batch-size", type=int, default=63)
     parser.add_argument("--sparse-width", type=int, default=64)
     parser.add_argument("--feature-dim", type=int, default=1316)
@@ -428,9 +705,13 @@ def main() -> None:
     args = build_parser().parse_args()
     if args.real_table_size:
         args.table_rows = 8_388_609
-    if args.batch_size != 63:
+    if args.real_entry_template:
+        real_hlo_path = resolve_real_hlo_path(args.real_hlo)
+    else:
+        real_hlo_path = None
+    if not args.real_entry_template and args.batch_size != 63:
         raise ValueError("The SavedModel signature currently mimics fixed batch size 63, like the real cluster dump")
-    if args.feature_dim != 1316:
+    if not args.real_entry_template and args.feature_dim != 1316:
         raise ValueError("The SavedModel signature currently mimics fixed feature dim 1316, like the real cluster dump")
     if args.clean and args.dump_hlo:
         shutil.rmtree(args.hlo_dir, ignore_errors=True)
@@ -442,7 +723,11 @@ def main() -> None:
         "packed_moe": args.packed_moe,
         "dense_sessions": args.dense_sessions,
         "strip_init_signature": args.strip_init_signature,
+        "real_entry_template": args.real_entry_template,
     }
+    if real_hlo_path is not None:
+        result["real_hlo"] = str(real_hlo_path)
+        result["entry_arg_count"] = len(parse_hlo_entry_specs(real_hlo_path))
     if args.export:
         result["exported"] = str(export_saved_model(args))
     if args.invoke:
