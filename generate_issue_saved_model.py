@@ -34,6 +34,7 @@ _bootstrap_xla_dump_flags()
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "1")
 
 import tensorflow as tf  # noqa: E402
+from tensorflow.core.protobuf import saved_model_pb2  # noqa: E402
 
 
 HISTORY_SPECS = (
@@ -41,6 +42,7 @@ HISTORY_SPECS = (
     ("noware", 57, 7),
     ("search", 14, 5),
 )
+INIT_OP_SIGNATURE_KEY = "__saved_model_init_op"
 
 
 def swish(value: tf.Tensor) -> tf.Tensor:
@@ -351,7 +353,23 @@ def export_saved_model(args: argparse.Namespace) -> Path:
         dense_sessions=args.dense_sessions,
     )
     tf.saved_model.save(model, str(export_dir), signatures={"serving_default": model.serve})
+    if args.strip_init_signature:
+        strip_init_signature(export_dir)
     return export_dir
+
+
+def strip_init_signature(export_dir: Path) -> bool:
+    saved_model_path = export_dir / "saved_model.pb"
+    saved_model = saved_model_pb2.SavedModel()
+    saved_model.ParseFromString(saved_model_path.read_bytes())
+    removed = False
+    for meta_graph in saved_model.meta_graphs:
+        if INIT_OP_SIGNATURE_KEY in meta_graph.signature_def:
+            del meta_graph.signature_def[INIT_OP_SIGNATURE_KEY]
+            removed = True
+    if removed:
+        saved_model_path.write_bytes(saved_model.SerializeToString())
+    return removed
 
 
 def invoke_saved_model(args: argparse.Namespace) -> dict[str, object]:
@@ -398,6 +416,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--packed-moe", action="store_true")
     parser.add_argument("--dense-sessions", action="store_true")
     parser.add_argument("--clean", action="store_true")
+    parser.add_argument("--strip-init-signature", action="store_true", help="Remove __saved_model_init_op from SignatureDefs for runners that execute every signature")
     parser.add_argument("--export", action="store_true")
     parser.add_argument("--invoke", action="store_true")
     parser.add_argument("--dump-hlo", action="store_true")
@@ -422,6 +441,7 @@ def main() -> None:
         "table_rows": args.table_rows,
         "packed_moe": args.packed_moe,
         "dense_sessions": args.dense_sessions,
+        "strip_init_signature": args.strip_init_signature,
     }
     if args.export:
         result["exported"] = str(export_saved_model(args))
