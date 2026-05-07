@@ -466,7 +466,7 @@ class RealCluster2EntryTemplate(tf.Module):
             shared_dim = min(lhs.shape.as_list()[0], rhs.shape.as_list()[0])
             with tf.name_scope(f"model/extra_dot_fanout_{index}"):
                 dot = tf.matmul(tf.transpose(lhs[:shared_dim, :]), rhs[:shared_dim, :], name="MatMul")
-                touch = touch + tf.reduce_sum(dot) * tf.constant(1.0e-12, dtype=tf.float32)
+                touch = touch + tf.reduce_sum(dot) * tf.constant(1.0e-6, dtype=tf.float32)
         return touch
 
     def _features(self, entry_args: tuple[tf.Tensor, ...], touch: tf.Tensor) -> tf.Tensor:
@@ -540,6 +540,33 @@ class RealCluster2EntryTemplate(tf.Module):
         }
 
 
+class RealCluster2HeavyDotTemplate(RealCluster2EntryTemplate):
+    """Real-entry template that makes the 46 dot ops do larger runtime work."""
+
+    def _extra_dot_touch(self, args: tuple[tf.Tensor, ...]) -> tf.Tensor:
+        features = self._fit_features([self._reduce_to_batch_feature(args[index]) for index in range(96)], tf.constant(0.0))
+        padded_features = tf.concat([features, tf.zeros([63, 224], dtype=tf.float32)], axis=1)
+        touch = tf.constant(0.0, dtype=tf.float32)
+        heavy_pairs = [
+            (padded_features, args[161]),
+            (features, args[163]),
+            (features, args[164]),
+            (features, args[165]),
+        ]
+        for index, (lhs, rhs) in enumerate(heavy_pairs):
+            with tf.name_scope(f"model/heavy_dot_fanout_{index}"):
+                dot = tf.matmul(lhs, rhs, name="MatMul")
+                touch = touch + tf.reduce_sum(dot) * tf.constant(1.0e-6, dtype=tf.float32)
+        for index in range(26):
+            lhs = tf.cast(args[index], tf.float32)
+            rhs = tf.cast(args[index + 1], tf.float32)
+            shared_dim = min(lhs.shape.as_list()[0], rhs.shape.as_list()[0])
+            with tf.name_scope(f"model/extra_dot_fanout_{index}"):
+                dot = tf.matmul(tf.transpose(lhs[:shared_dim, :]), rhs[:shared_dim, :], name="MatMul")
+                touch = touch + tf.reduce_sum(dot) * tf.constant(1.0e-6, dtype=tf.float32)
+        return touch
+
+
 def make_example_inputs(*, table_rows: int, batch_size: int, sparse_width: int, base_dim: int) -> dict[str, tf.Tensor]:
     dense_values = tf.linspace(-1.0, 1.0, batch_size * base_dim)
     dense_base = tf.reshape(dense_values, [batch_size, base_dim])
@@ -578,12 +605,17 @@ def _scatter_indices(update_count: int, max_len: int) -> tf.Tensor:
     return tf.stack([rows, cols], axis=1)
 
 
+def _float_input(shape: tf.TensorShape, index: int) -> tf.Tensor:
+    scale = tf.constant(((index % 13) + 1) * 0.01, dtype=tf.float32)
+    return tf.ones(shape, dtype=tf.float32) * scale
+
+
 def make_real_entry_inputs(input_specs: list[tf.TensorSpec]) -> dict[str, tf.Tensor]:
     inputs: dict[str, tf.Tensor] = {}
     for index, spec in enumerate(input_specs):
         shape = tf.TensorShape(spec.shape)
         if spec.dtype == tf.float32:
-            inputs[f"arg{index}"] = tf.zeros(shape, dtype=tf.float32)
+            inputs[f"arg{index}"] = _float_input(shape, index)
         elif spec.dtype in (tf.int32, tf.int64):
             inputs[f"arg{index}"] = _sequential_indices(shape, spec.dtype)
         elif spec.dtype == tf.bool:
@@ -608,7 +640,7 @@ def export_saved_model(args: argparse.Namespace) -> Path:
 
     if args.real_entry_template:
         input_specs = parse_hlo_entry_specs(resolve_real_hlo_path(args.real_hlo))
-        model = RealCluster2EntryTemplate(input_specs)
+        model = RealCluster2HeavyDotTemplate(input_specs) if args.heavy_dots else RealCluster2EntryTemplate(input_specs)
         signature = model.serve
     else:
         model = Cluster2IssueModel(
@@ -682,6 +714,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--table-rows", type=int, default=200_000)
     parser.add_argument("--real-table-size", action="store_true", help="Use f32[8388609,4] tables like the real dump")
     parser.add_argument("--real-entry-template", action="store_true", help="Export a 233-input template parsed from the real cluster_2 HLO ENTRY signature")
+    parser.add_argument("--heavy-dots", action="store_true", help="With --real-entry-template, spend the matched dot count on larger runtime matmuls for profiling")
     parser.add_argument("--real-hlo", default=REAL_CLUSTER2_HLO, help="Real cluster_2 before_optimizations HLO used for --real-entry-template")
     parser.add_argument("--batch-size", type=int, default=63)
     parser.add_argument("--sparse-width", type=int, default=64)
@@ -709,6 +742,8 @@ def main() -> None:
         real_hlo_path = resolve_real_hlo_path(args.real_hlo)
     else:
         real_hlo_path = None
+    if args.heavy_dots and not args.real_entry_template:
+        raise ValueError("--heavy-dots requires --real-entry-template")
     if not args.real_entry_template and args.batch_size != 63:
         raise ValueError("The SavedModel signature currently mimics fixed batch size 63, like the real cluster dump")
     if not args.real_entry_template and args.feature_dim != 1316:
@@ -724,6 +759,7 @@ def main() -> None:
         "dense_sessions": args.dense_sessions,
         "strip_init_signature": args.strip_init_signature,
         "real_entry_template": args.real_entry_template,
+        "heavy_dots": args.heavy_dots,
     }
     if real_hlo_path is not None:
         result["real_hlo"] = str(real_hlo_path)
