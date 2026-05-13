@@ -394,6 +394,7 @@ xla_cc_test(
     srcs = ["algebraic_simplifier_test.cc"],
     deps = [
         ":algebraic_simplifier",
+        ":hlo_dce",
         "//xla:comparison_util",
         "//xla:literal",
         "//xla:literal_util",

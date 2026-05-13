@@ -44,6 +44,7 @@ limitations under the License.
 #include "xla/hlo/ir/hlo_opcode.h"
 #include "xla/hlo/parser/hlo_parser.h"
 #include "xla/hlo/pass/hlo_pass_fix.h"
+#include "xla/hlo/transforms/simplifiers/hlo_dce.h"
 #include "xla/hlo/testlib/hlo_hardware_independent_test_base.h"
 #include "xla/hlo/testlib/pattern_matcher_gmock.h"
 #include "xla/hlo/testlib/test.h"
@@ -8720,6 +8721,184 @@ TEST_F(AlgebraicSimplifierTest, GatherOfScalarToBroadcast) {
   EXPECT_TRUE(simplifier.Run(module.get()).value());
   auto root = module->entry_computation()->root_instruction();
   EXPECT_THAT(root, GmockMatch(m::Broadcast(m::Reshape(m::Parameter(0)))));
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       GatherOfConcatenateWithConstantPrefixIndices) {
+  // This mirrors the static MoE case: the gather selects only the first two
+  // unit-width concat operands, so DCE can drop the third producer branch.
+  const char* hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  p0 = f32[4,1,8]{2,1,0} parameter(0)
+  p1 = f32[4,1,8]{2,1,0} parameter(1)
+  p2 = f32[4,1,8]{2,1,0} parameter(2)
+  concat = f32[4,3,8]{2,1,0} concatenate(p0, p1, p2), dimensions={1}
+  indices = s32[2]{0} constant({0, 1})
+  ROOT gather = f32[4,2,8]{2,1,0} gather(concat, indices),
+    offset_dims={0,2}, collapsed_slice_dims={1}, start_index_map={1},
+    index_vector_dim=1, slice_sizes={4,1,8}
+}
+")";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(module.get()).value());
+
+  auto* computation = module->entry_computation();
+  EXPECT_THAT(computation->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(0), m::Parameter(1))));
+  EXPECT_EQ(computation->parameter_instruction(2)->user_count(), 0);
+}
+
+TEST_F(AlgebraicSimplifierTest, GatherOfConcatenateWithMoeShapedPrefixIndices) {
+  // The serving MoE HLO stacks three expert results, then statically gathers
+  // experts 0 and 1. Rewriting the gather to a two-input concatenate exposes
+  // expert 2 as dead code.
+  const char* hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  p0 = f32[81,1,128]{2,1,0} parameter(0)
+  p1 = f32[81,1,128]{2,1,0} parameter(1)
+  p2 = f32[81,1,128]{2,1,0} parameter(2)
+  concat = f32[81,3,128]{2,1,0} concatenate(p0, p1, p2), dimensions={1}
+  indices = s32[2]{0} constant({0, 1})
+  ROOT gather = f32[81,2,128]{2,1,0} gather(concat, indices),
+    offset_dims={0,2}, collapsed_slice_dims={1}, start_index_map={1},
+    index_vector_dim=1, slice_sizes={81,1,128}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(module.get()).value());
+
+  auto* computation = module->entry_computation();
+  EXPECT_THAT(computation->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(0), m::Parameter(1))));
+  EXPECT_EQ(computation->parameter_instruction(2)->user_count(), 0);
+}
+
+TEST_F(AlgebraicSimplifierTest,
+       GatherOfConcatenateWithArbitraryStaticIndices) {
+  // Static gather indices do not need to be a prefix. The replacement keeps
+  // the gather order while leaving unselected concat operands dead.
+  const char* hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  p0 = f32[4,1,8]{2,1,0} parameter(0)
+  p1 = f32[4,1,8]{2,1,0} parameter(1)
+  p2 = f32[4,1,8]{2,1,0} parameter(2)
+  p3 = f32[4,1,8]{2,1,0} parameter(3)
+  concat = f32[4,4,8]{2,1,0} concatenate(p0, p1, p2, p3), dimensions={1}
+  indices = s32[2]{0} constant({1, 3})
+  ROOT gather = f32[4,2,8]{2,1,0} gather(concat, indices),
+    offset_dims={0,2}, collapsed_slice_dims={1}, start_index_map={1},
+    index_vector_dim=1, slice_sizes={4,1,8}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(module.get()).value());
+
+  auto* computation = module->entry_computation();
+  EXPECT_THAT(computation->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(1), m::Parameter(3))));
+  EXPECT_EQ(computation->parameter_instruction(0)->user_count(), 0);
+  EXPECT_EQ(computation->parameter_instruction(2)->user_count(), 0);
+}
+
+TEST_F(AlgebraicSimplifierTest, GatherOfConcatenateWithIotaPrefixIndices) {
+  // CPU canonicalization may expose the same static selector as iota(); it is
+  // still an in-order prefix and can prune the unused concat operand.
+  const char* hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  p0 = f32[4,1,8]{2,1,0} parameter(0)
+  p1 = f32[4,1,8]{2,1,0} parameter(1)
+  p2 = f32[4,1,8]{2,1,0} parameter(2)
+  concat = f32[4,3,8]{2,1,0} concatenate(p0, p1, p2), dimensions={1}
+  indices = s32[2]{0} iota(), iota_dimension=0
+  ROOT gather = f32[4,2,8]{2,1,0} gather(concat, indices),
+    offset_dims={0,2}, collapsed_slice_dims={1}, start_index_map={1},
+    index_vector_dim=1, slice_sizes={4,1,8}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(module.get()).value());
+
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(0), m::Parameter(1))));
+}
+
+TEST_F(AlgebraicSimplifierTest, GatherOfConcatenateWithReorderedStaticIndices) {
+  // Reordered static indices are safe as long as the new concat preserves the
+  // same selected operand order.
+  const char* hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  p0 = f32[4,1,8]{2,1,0} parameter(0)
+  p1 = f32[4,1,8]{2,1,0} parameter(1)
+  p2 = f32[4,1,8]{2,1,0} parameter(2)
+  concat = f32[4,3,8]{2,1,0} concatenate(p0, p1, p2), dimensions={1}
+  indices = s32[2]{0} constant({1, 0})
+  ROOT gather = f32[4,2,8]{2,1,0} gather(concat, indices),
+    offset_dims={0,2}, collapsed_slice_dims={1}, start_index_map={1},
+    index_vector_dim=1, slice_sizes={4,1,8}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifier simplifier(default_options_);
+  ASSERT_TRUE(simplifier.Run(module.get()).value());
+
+  auto* computation = module->entry_computation();
+  EXPECT_THAT(computation->root_instruction(),
+              GmockMatch(m::Concatenate(m::Parameter(1), m::Parameter(0))));
+  EXPECT_EQ(computation->parameter_instruction(2)->user_count(), 0);
+}
+
+TEST_F(AlgebraicSimplifierTest, GatherOfConcatenateDoesNotRewriteDynamicIndices) {
+  // Runtime-dependent indices may select any concat operand, so pruning any
+  // producer would be incorrect.
+  const char* hlo_string = R"(
+HloModule module
+
+ENTRY main {
+  p0 = f32[4,1,8]{2,1,0} parameter(0)
+  p1 = f32[4,1,8]{2,1,0} parameter(1)
+  p2 = f32[4,1,8]{2,1,0} parameter(2)
+  indices = s32[2]{0} parameter(3)
+  concat = f32[4,3,8]{2,1,0} concatenate(p0, p1, p2), dimensions={1}
+  ROOT gather = f32[4,2,8]{2,1,0} gather(concat, indices),
+    offset_dims={0,2}, collapsed_slice_dims={1}, start_index_map={1},
+    index_vector_dim=1, slice_sizes={4,1,8}
+}
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnVerifiedModule(hlo_string));
+
+  AlgebraicSimplifier simplifier(default_options_);
+  EXPECT_FALSE(simplifier.Run(module.get()).value());
+
+  EXPECT_THAT(module->entry_computation()->root_instruction(),
+              GmockMatch(m::Gather(m::Concatenate(m::Parameter(0),
+                                                  m::Parameter(1),
+                                                  m::Parameter(2)),
+                                  m::Parameter(3))));
 }
 
 TEST_F(AlgebraicSimplifierTest, GatherOfPad) {
