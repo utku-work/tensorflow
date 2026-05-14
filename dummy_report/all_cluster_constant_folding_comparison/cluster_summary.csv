@@ -1,0 +1,9 @@
+label,cluster,profiles,latency_min_us,latency_p50_us,latency_p95_us,latency_mean_us,latency_max_us,latency_sum_ms,operator_rows_p50,batches,signatures
+w_const,cluster_0,1,672.0,672.0,672.0,672.0,672.0,0.672,22,3x1,"const=2,res=0,suffix=159"
+w_const,cluster_1,1,95.3,95.3,95.3,95.3,95.3,0.095,58,16x1,"const=0,res=95,suffix=382"
+w_const,cluster_2,4,6740.0,7155.0,9146.5,7620.0,9430.0,30.48,20.0,"2x3, 3x1","const=45,res=55,suffix=1886 x3; const=45,res=55,suffix=1904"
+w_const,cluster_3,34,192.0,1870.0,2797.0,1723.382,4040.0,58.595,23.0,"2x3, 3x1, 29x3, 51x3, 81x3, 88x3, 90x3, 91x3, 96x3, 97x3, 99x3, 176x3","const=0,res=0,suffix=180 x34"
+wo_const,cluster_0,1,643.0,643.0,643.0,643.0,643.0,0.643,22,3x1,"const=2,res=0,suffix=159"
+wo_const,cluster_1,1,91.3,91.3,91.3,91.3,91.3,0.091,58,16x1,"const=0,res=95,suffix=382"
+wo_const,cluster_2,5,4730.0,9560.0,11040.0,8422.0,11100.0,42.11,20,"2x2, 3x1, 29x2","const=45,res=95,suffix=2054 x2; const=45,res=95,suffix=2056 x2; const=45,res=95,suffix=2074"
+wo_const,cluster_3,24,202.0,1865.0,3208.5,1863.833,4210.0,44.732,23.0,"2x2, 3x1, 29x2, 51x2, 81x2, 88x2, 90x2, 91x2, 96x2, 97x2, 99x3, 176x2","const=0,res=0,suffix=180 x24"

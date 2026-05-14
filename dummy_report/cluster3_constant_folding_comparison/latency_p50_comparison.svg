@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="560" viewBox="0 0 1080 560">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24" y="34" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#111827">P50 latency comparison by batch</text>
+<text x="24" y="56" font-family="Arial, sans-serif" font-size="12" fill="#4b5563">Both profile sets on the same batch axis</text>
+<line x1="82" y1="482.0" x2="890" y2="482.0" stroke="#e5e7eb"/>
+<text x="72" y="486.0" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">0</text>
+<line x1="82" y1="402.0" x2="890" y2="402.0" stroke="#e5e7eb"/>
+<text x="72" y="406.0" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">1k</text>
+<line x1="82" y1="322.0" x2="890" y2="322.0" stroke="#e5e7eb"/>
+<text x="72" y="326.0" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">2k</text>
+<line x1="82" y1="242.0" x2="890" y2="242.0" stroke="#e5e7eb"/>
+<text x="72" y="246.0" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">3k</text>
+<line x1="82" y1="162.0" x2="890" y2="162.0" stroke="#e5e7eb"/>
+<text x="72" y="166.0" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">4k</text>
+<line x1="82" y1="82.0" x2="890" y2="82.0" stroke="#e5e7eb"/>
+<text x="72" y="86.0" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">5k</text>
+<line x1="82" y1="82" x2="82" y2="482" stroke="#9ca3af"/>
+<line x1="82" y1="482" x2="890" y2="482" stroke="#9ca3af"/>
+<line x1="82.0" y1="482" x2="82.0" y2="487" stroke="#9ca3af"/>
+<text x="82.0" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">2</text>
+<line x1="155.5" y1="482" x2="155.5" y2="487" stroke="#9ca3af"/>
+<text x="155.5" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">3</text>
+<line x1="228.9" y1="482" x2="228.9" y2="487" stroke="#9ca3af"/>
+<text x="228.9" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">29</text>
+<line x1="302.4" y1="482" x2="302.4" y2="487" stroke="#9ca3af"/>
+<text x="302.4" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">51</text>
+<line x1="375.8" y1="482" x2="375.8" y2="487" stroke="#9ca3af"/>
+<text x="375.8" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">81</text>
+<line x1="449.3" y1="482" x2="449.3" y2="487" stroke="#9ca3af"/>
+<text x="449.3" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">88</text>
+<line x1="522.7" y1="482" x2="522.7" y2="487" stroke="#9ca3af"/>
+<text x="522.7" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">90</text>
+<line x1="596.2" y1="482" x2="596.2" y2="487" stroke="#9ca3af"/>
+<text x="596.2" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">91</text>
+<line x1="669.6" y1="482" x2="669.6" y2="487" stroke="#9ca3af"/>
+<text x="669.6" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">96</text>
+<line x1="743.1" y1="482" x2="743.1" y2="487" stroke="#9ca3af"/>
+<text x="743.1" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">97</text>
+<line x1="816.5" y1="482" x2="816.5" y2="487" stroke="#9ca3af"/>
+<text x="816.5" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">99</text>
+<line x1="890.0" y1="482" x2="890.0" y2="487" stroke="#9ca3af"/>
+<text x="890.0" y="504" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" fill="#374151">176</text>
+<text x="486.0" y="546" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#374151">batch size</text>
+<text x="18" y="282.0" transform="rotate(-90 18 282.0)" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#374151">p50 latency (us)</text>
+<path d="M 82.0 466.5 L 155.5 459.6 L 228.9 428.2 L 302.4 389.2 L 375.8 346.0 L 449.3 332.4 L 522.7 334.0 L 596.2 328.4 L 669.6 322.8 L 743.1 322.0 L 816.5 317.2 L 890.0 257.2" fill="none" stroke="#2563eb" stroke-width="3"/>
+<circle cx="82.0" cy="466.5" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 2: 194.000</title>
+<circle cx="155.5" cy="459.6" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 3: 280.000</title>
+<circle cx="228.9" cy="428.2" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 29: 672.000</title>
+<circle cx="302.4" cy="389.2" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 51: 1160.000</title>
+<circle cx="375.8" cy="346.0" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 81: 1700.000</title>
+<circle cx="449.3" cy="332.4" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 88: 1870.000</title>
+<circle cx="522.7" cy="334.0" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 90: 1850.000</title>
+<circle cx="596.2" cy="328.4" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 91: 1920.000</title>
+<circle cx="669.6" cy="322.8" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 96: 1990.000</title>
+<circle cx="743.1" cy="322.0" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 97: 2000.000</title>
+<circle cx="816.5" cy="317.2" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 99: 2060.000</title>
+<circle cx="890.0" cy="257.2" r="5" fill="#2563eb" stroke="#ffffff" stroke-width="1.5"/>
+<title>w_const batch 176: 2810.000</title>
+<path d="M 82.0 463.9 L 155.5 459.4 L 228.9 394.6 L 302.4 387.6 L 375.8 328.8 L 449.3 336.8 L 522.7 318.8 L 596.2 326.8 L 669.6 280.8 L 743.1 281.6 L 816.5 314.8 L 890.0 199.6" fill="none" stroke="#dc2626" stroke-width="3"/>
+<circle cx="82.0" cy="463.9" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 2: 226.500</title>
+<circle cx="155.5" cy="459.4" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 3: 283.000</title>
+<circle cx="228.9" cy="394.6" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 29: 1093.000</title>
+<circle cx="302.4" cy="387.6" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 51: 1180.000</title>
+<circle cx="375.8" cy="328.8" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 81: 1915.000</title>
+<circle cx="449.3" cy="336.8" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 88: 1815.000</title>
+<circle cx="522.7" cy="318.8" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 90: 2040.000</title>
+<circle cx="596.2" cy="326.8" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 91: 1940.000</title>
+<circle cx="669.6" cy="280.8" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 96: 2515.000</title>
+<circle cx="743.1" cy="281.6" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 97: 2505.000</title>
+<circle cx="816.5" cy="314.8" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 99: 2090.000</title>
+<circle cx="890.0" cy="199.6" r="5" fill="#dc2626" stroke="#ffffff" stroke-width="1.5"/>
+<title>wo_const batch 176: 3530.000</title>
+<line x1="922" y1="98" x2="946" y2="98" stroke="#2563eb" stroke-width="3"/>
+<circle cx="934" cy="98" r="4" fill="#2563eb"/>
+<text x="956" y="102" font-family="Arial, sans-serif" font-size="12" fill="#374151">w_const</text>
+<line x1="922" y1="126" x2="946" y2="126" stroke="#dc2626" stroke-width="3"/>
+<circle cx="934" cy="126" r="4" fill="#dc2626"/>
+<text x="956" y="130" font-family="Arial, sans-serif" font-size="12" fill="#374151">wo_const</text>
+</svg>

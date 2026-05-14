@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="920" height="500" viewBox="0 0 920 500">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="24" y="34" font-family="Arial, sans-serif" font-size="20" font-weight="700" fill="#111827">median profiled operator rows by cluster</text>
+<text x="24" y="56" font-family="Arial, sans-serif" font-size="12" fill="#4b5563">operator rows</text>
+<line x1="86" y1="422.0" x2="892" y2="422.0" stroke="#e5e7eb"/>
+<text x="76" y="426.0" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">0</text>
+<line x1="86" y1="306.7" x2="892" y2="306.7" stroke="#e5e7eb"/>
+<text x="76" y="310.7" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">20</text>
+<line x1="86" y1="191.3" x2="892" y2="191.3" stroke="#e5e7eb"/>
+<text x="76" y="195.3" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">40</text>
+<line x1="86" y1="76.0" x2="892" y2="76.0" stroke="#e5e7eb"/>
+<text x="76" y="80.0" text-anchor="end" font-family="Arial, sans-serif" font-size="11" fill="#6b7280">60</text>
+<line x1="86" y1="76" x2="86" y2="422" stroke="#9ca3af"/>
+<line x1="86" y1="422" x2="892" y2="422" stroke="#9ca3af"/>
+<rect x="128.8" y="295.1" width="47.6" height="126.9" fill="#2563eb"/>
+<text x="152.5" y="290.1" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#374151">22</text>
+<rect x="186.8" y="295.1" width="47.6" height="126.9" fill="#ea580c"/>
+<text x="210.5" y="290.1" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#374151">22</text>
+<text x="186.8" y="444" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#374151">cluster_0</text>
+<rect x="330.2" y="87.5" width="47.6" height="334.5" fill="#2563eb"/>
+<text x="354.0" y="82.5" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#374151">58</text>
+<rect x="388.2" y="87.5" width="47.6" height="334.5" fill="#ea580c"/>
+<text x="412.0" y="82.5" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#374151">58</text>
+<text x="388.2" y="444" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#374151">cluster_1</text>
+<rect x="531.8" y="306.7" width="47.6" height="115.3" fill="#2563eb"/>
+<text x="555.5" y="301.7" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#374151">20</text>
+<rect x="589.8" y="306.7" width="47.6" height="115.3" fill="#ea580c"/>
+<text x="613.5" y="301.7" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#374151">20</text>
+<text x="589.8" y="444" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#374151">cluster_2</text>
+<rect x="733.2" y="289.4" width="47.6" height="132.6" fill="#2563eb"/>
+<text x="757.0" y="284.4" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#374151">23</text>
+<rect x="791.2" y="289.4" width="47.6" height="132.6" fill="#ea580c"/>
+<text x="815.0" y="284.4" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#374151">23</text>
+<text x="791.2" y="444" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" fill="#374151">cluster_3</text>
+<rect x="86" y="462" width="12" height="12" fill="#2563eb"/>
+<text x="104" y="472" font-family="Arial, sans-serif" font-size="12" fill="#374151">w_const</text>
+<rect x="196" y="462" width="12" height="12" fill="#ea580c"/>
+<text x="214" y="472" font-family="Arial, sans-serif" font-size="12" fill="#374151">wo_const</text>
+</svg>
