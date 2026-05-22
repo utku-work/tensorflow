@@ -4277,6 +4277,158 @@ GatherOfPadInfo CheckPaddedDimsForGatherOfPad(
   return {true, true};
 }
 
+// Returns the selected operand indices if start_indices is either an iota or a
+// constant with integral type, and each index is a valid operand index of the
+// concatenate dimension. Otherwise, returns std::nullopt.
+std::optional<std::vector<int64_t>> GetGatherSelectedOperandIndices(
+    const HloInstruction* start_indices) {
+  const Shape& shape = start_indices->shape();
+  if (!shape.IsArray() || shape.dimensions().size() != 1 ||
+      !primitive_util::IsIntegralType(shape.element_type())) {
+    return std::nullopt;
+  }
+
+  const int64_t index_count = shape.dimensions(0);
+  if (index_count <= 0) {
+    return std::nullopt;
+  }
+
+  std::vector<int64_t> selected_operand_indices;
+  selected_operand_indices.reserve(index_count);
+  if (start_indices->opcode() == HloOpcode::kIota) {
+    if (Cast<HloIotaInstruction>(start_indices)->iota_dimension() != 0) {
+      return std::nullopt;
+    }
+    for (int64_t i = 0; i < index_count; ++i) {
+      selected_operand_indices.push_back(i);
+    }
+    return selected_operand_indices;
+  }
+
+  if (start_indices->opcode() != HloOpcode::kConstant) {
+    return std::nullopt;
+  }
+
+  const Literal& literal = start_indices->literal();
+  for (int64_t i = 0; i < index_count; ++i) {
+    std::optional<int64_t> index = literal.GetIntegralAsS64({i});
+    if (!index.has_value()) {
+      return std::nullopt;
+    }
+    selected_operand_indices.push_back(*index);
+  }
+  return selected_operand_indices;
+}
+
+// Returns true if the output of the gather keeps the same order of the
+// concatenate dimension as the operand, which means the gather doesn't reorder
+// the concatenate dimension in the output
+bool GatherOutputKeepsConcatenateDimensionOrder(const HloInstruction* gather,
+                                                int64_t concatenate_dimension) {
+  const Shape& operand_shape = gather->operand(0)->shape();
+  const Shape& gather_shape = gather->shape();
+  if (gather_shape.dimensions().size() != operand_shape.dimensions().size()) {
+    return false;
+  }
+
+  std::vector<int64_t> expected_offset_dims;
+  expected_offset_dims.reserve(operand_shape.dimensions().size() - 1);
+  for (int64_t dim = 0; dim < operand_shape.dimensions().size(); ++dim) {
+    if (dim != concatenate_dimension) {
+      expected_offset_dims.push_back(dim);
+    }
+  }
+  return absl::c_equal(gather->gather_dimension_numbers().offset_dims(),
+                       expected_offset_dims);
+}
+
+// Tries to simplify a gather of a concatenate with static indices selecting
+// individual operands of the concatenate. If successful, returns a new
+// concatenate of the selected operands. Otherwise, returns nullptr.
+absl::StatusOr<HloInstruction*> TrySimplifyGatherOfConcatenate(
+    HloInstruction* gather) {
+  HloInstruction* concatenate = gather->mutable_operand(0);
+  if (concatenate->opcode() != HloOpcode::kConcatenate) {
+    return nullptr;
+  }
+
+  const Shape& operand_shape = concatenate->shape();
+  const Shape& gather_shape = gather->shape();
+  if (!operand_shape.IsArray() || !gather_shape.IsArray()) {
+    return nullptr;
+  }
+
+  const GatherDimensionNumbers& dim_numbers =
+      gather->gather_dimension_numbers();
+  const int64_t concatenate_dimension = concatenate->concatenate_dimension();
+  const int64_t operand_rank = operand_shape.dimensions().size();
+
+  // This simplification only handles gathers that act like simple indexing into
+  // the concatenate dimension. Reject batched gathers, multi-axis indexing, or
+  // gathers that reorder the concatenate dimension in the output.
+  if (dim_numbers.operand_batching_dims_size() != 0 ||
+      dim_numbers.start_indices_batching_dims_size() != 0 ||
+      dim_numbers.start_index_map_size() != 1 ||
+      dim_numbers.start_index_map(0) != concatenate_dimension ||
+      dim_numbers.collapsed_slice_dims_size() != 1 ||
+      dim_numbers.collapsed_slice_dims(0) != concatenate_dimension ||
+      dim_numbers.index_vector_dim() !=
+          gather->operand(1)->shape().dimensions().size() ||
+      gather->gather_slice_sizes().size() != operand_rank ||
+      // The output of the gather must keep the same order of the concatenate
+      !GatherOutputKeepsConcatenateDimensionOrder(gather,
+                                                  concatenate_dimension)) {
+    return nullptr;
+  }
+
+  // The gather slice size for the concatenate dimension must be 1, and the
+  // slice size for all other dimensions must match the operand shape.
+  for (int64_t dim = 0; dim < operand_rank; ++dim) {
+    const int64_t expected_slice_size =
+        dim == concatenate_dimension ? 1 : operand_shape.dimensions(dim);
+    if (gather->gather_slice_sizes()[dim] != expected_slice_size) {
+      return nullptr;
+    }
+  }
+
+  for (const HloInstruction* operand : concatenate->operands()) {
+    if (operand->shape().dimensions(concatenate_dimension) != 1) {
+      return nullptr;
+    }
+  }
+
+  // The gather must select individual operands of the concatenate.
+  std::optional<std::vector<int64_t>> selected_operand_indices =
+      GetGatherSelectedOperandIndices(gather->operand(1));
+  if (!selected_operand_indices.has_value() ||
+      gather_shape.dimensions(concatenate_dimension) !=
+          selected_operand_indices->size()) {
+    return nullptr;
+  }
+
+  // All checks passed, we can simplify the gather of concatenate to a
+  // concatenate of selected operands.
+  std::vector<HloInstruction*> selected_operands;
+  selected_operands.reserve(selected_operand_indices->size());
+  absl::flat_hash_set<int64_t> unique_selected_operand_indices;
+  for (int64_t operand_index : *selected_operand_indices) {
+    if (operand_index < 0 || operand_index >= concatenate->operand_count()) {
+      return nullptr;
+    }
+    unique_selected_operand_indices.insert(operand_index);
+    selected_operands.push_back(concatenate->mutable_operand(operand_index));
+  }
+  if (unique_selected_operand_indices.size() >= concatenate->operand_count()) {
+    return nullptr;
+  }
+
+  HloInstruction* new_concatenate =
+      gather->AddInstruction(HloInstruction::CreateConcatenate(
+          gather->shape(), selected_operands, concatenate_dimension));
+  gather->SetupDerivedInstruction(new_concatenate);
+  return new_concatenate;
+}
+
 }  // namespace
 
 absl::Status AlgebraicSimplifierVisitor::HandleGather(HloInstruction* gather) {
@@ -4298,6 +4450,15 @@ absl::Status AlgebraicSimplifierVisitor::HandleGather(HloInstruction* gather) {
         MakeBroadcastHlo(new_operand, {}, gather->shape());
     return ReplaceInstruction(gather, new_gather);
   }
+
+  TF_ASSIGN_OR_RETURN(HloInstruction* gather_of_concatenate,
+                      TrySimplifyGatherOfConcatenate(gather));
+  if (gather_of_concatenate != nullptr) {
+    VLOG(10) << "Replaced gather(concatenate(...), static_indices) with "
+                "concatenate(selected_operands)";
+    return ReplaceInstruction(gather, gather_of_concatenate);
+  }
+
   // If the operand of a gather is very small, it is easier to fuse a
   // sequence of selects.
   const Shape& index_shape = gather->operand(1)->shape();
