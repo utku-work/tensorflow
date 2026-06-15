@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <initializer_list>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -18,6 +19,7 @@
 #include "tensorflow/core/framework/function.pb.h"
 #include "tensorflow/core/framework/node_def.pb.h"
 #include "tensorflow/core/framework/tensor.h"
+#include "tensorflow/core/graph/tensor_id.h"
 #include "tensorflow/core/platform/env.h"
 #include "tensorflow/core/platform/path.h"
 #include "tensorflow/core/platform/tstring.h"
@@ -29,20 +31,8 @@ namespace {
 
 constexpr int64_t kDefaultMaxTensorBytes = 1LL * 1024 * 1024;
 
-struct FrozenValue {
-	Tensor tensor;
-};
-
-using FrozenValueMap = absl::flat_hash_map<std::string, FrozenValue>;
-using FrozenInputMap = absl::flat_hash_map<std::string, const FrozenValue*>;
-
-bool IsEnabled() {
-	return true;
-}
-
-int64_t GetMaxFrozenTensorBytes() {
-	return kDefaultMaxTensorBytes;
-}
+using FrozenValueMap = absl::flat_hash_map<std::string, Tensor>;
+using FrozenInputMap = absl::flat_hash_map<std::string, const Tensor*>;
 
 bool HasAnyToken(absl::string_view value,
 								 std::initializer_list<absl::string_view> tokens) {
@@ -64,21 +54,33 @@ bool HasAnySuffix(absl::string_view value,
 	return false;
 }
 
+// Allowed promotions for freezing variables are based on variable name
+// patterns, which is admittedly a bit hacky but is the most practical way to
+// avoid freezing non-variable tensors without doing an expensive static
+// analysis of the graph.
 bool IsAllowlistedVariableName(absl::string_view name) {
-	const std::string lowered_name = absl::AsciiStrToLower(std::string(name));
-	const absl::string_view lowered_view(lowered_name);
-	if (HasAnyToken(lowered_view,
-									{"embedding", "lookup_table", "/part_", "hash_table"})) {
-		return false;
-	}
-	return HasAnySuffix(lowered_view,
-											{"weight", "bias", "kernel", "_w", "/w", "_b",
-											 "/b", "beta", "gamma", "moving_mean",
-											 "moving_variance", "mean", "variance"});
+  const std::string lowered_name = absl::AsciiStrToLower(std::string(name));
+  const absl::string_view lowered_view(lowered_name);
+  if (HasAnyToken(lowered_view,
+                  {"embedding", "lookup_table", "/part_", "hash_table"})) {
+    return false;
+  }
+  return HasAnySuffix(lowered_view, {"weight", "bias", "kernel", "_w", "/w",
+                                     "_b", "/b", "beta", "gamma", "moving_mean",
+                                     "moving_variance", "mean", "variance"});
 }
 
 bool ShouldFreezeTensor(const Tensor& tensor, int64_t max_tensor_bytes) {
 	return max_tensor_bytes <= 0 || tensor.TotalBytes() <= max_tensor_bytes;
+}
+
+bool GraphContainsOp(const GraphDef& graph_def, absl::string_view op_name) {
+	for (const NodeDef& node : graph_def.node()) {
+		if (node.op() == op_name) {
+			return true;
+		}
+	}
+	return false;
 }
 
 std::string BaseNodeName(absl::string_view input) {
@@ -88,21 +90,6 @@ std::string BaseNodeName(absl::string_view input) {
 	const size_t colon = input.find(':');
 	if (colon == absl::string_view::npos) return std::string(input);
 	return std::string(input.substr(0, colon));
-}
-
-int OutputIndex(absl::string_view input) {
-	if (!input.empty() && input.front() == '^') {
-		input.remove_prefix(1);
-	}
-	const size_t colon = input.rfind(':');
-	if (colon == absl::string_view::npos) return 0;
-	int output_index = 0;
-	for (size_t i = colon + 1; i < input.size(); ++i) {
-		char ch = input[i];
-		if (ch < '0' || ch > '9') return 0;
-		output_index = output_index * 10 + (ch - '0');
-	}
-	return output_index;
 }
 
 bool GetFirstDataInput(const NodeDef& node, std::string* input_name) {
@@ -138,7 +125,7 @@ void PreserveInternalAttrs(const NodeDef& original, NodeDef* replacement) {
 	}
 }
 
-void ReplaceNodeWithConst(const FrozenValue& frozen_value, NodeDef* node) {
+void ReplaceNodeWithConst(const Tensor& frozen_value, NodeDef* node) {
 	const std::vector<std::string> controls = GetControlInputs(*node);
 	const NodeDef original = *node;
 
@@ -197,6 +184,9 @@ absl::StatusOr<std::string> GetConstStringValue(const NodeDef& node) {
 	return std::string(tensor.flat<tstring>()(0));
 }
 
+// Decodes a Const string tensor node into an in-memory vector of C++ strings.
+// RestoreV2 uses this form to store the checkpoint tensor names for each
+// output slot.
 absl::StatusOr<std::vector<std::string>> GetConstStringValues(
 		const NodeDef& node) {
 	if (node.op() != "Const") {
@@ -290,74 +280,91 @@ std::vector<std::string> CandidateCheckpointKeys(const NodeDef& node) {
 	return keys;
 }
 
-absl::StatusOr<FrozenValueMap> LoadFrozenVariableV1Values(
-		const std::string& export_dir, const GraphDef& graph_def,
-		int64_t max_tensor_bytes) {
-	bool has_variable_v2 = false;
-	for (const NodeDef& node : graph_def.node()) {
-		if (node.op() == "VariableV2") {
-			has_variable_v2 = true;
-			break;
-		}
-	}
-	if (!has_variable_v2) return FrozenValueMap();
-
+absl::StatusOr<std::unique_ptr<BundleReader>> OpenVariablesBundleReader(
+		const std::string& export_dir) {
 	const std::string variables_prefix = io::JoinPath(
 			export_dir, kSavedModelVariablesDirectory, kSavedModelVariablesFilename);
-	BundleReader reader(Env::Default(), variables_prefix);
+	auto reader = std::make_unique<BundleReader>(Env::Default(), variables_prefix);
 	TF_RETURN_WITH_CONTEXT_IF_ERROR(
-			reader.status(), "Unable to load SavedModel variables checkpoint from ",
+			reader->status(), "Unable to load SavedModel variables checkpoint from ",
 			variables_prefix);
+	return reader;
+}
 
-	TF_ASSIGN_OR_RETURN(const auto node_map, BuildNodeMap(graph_def));
-	FrozenValueMap frozen_values;
-	for (const NodeDef& node : graph_def.node()) {
-		if (node.op() != "Assign" || node.input_size() < 2) continue;
+// Scans SavedModel graph that uses VariableV2, find variables that look safe to
+// freeze, loads their checkpoint values.
+absl::StatusOr<FrozenValueMap> LoadFrozenVariableV1Values(
+    const std::string& export_dir, const GraphDef& graph_def,
+    int64_t max_tensor_bytes) {
+  // Skip the legacy-variable path entirely when the graph has no VariableV2
+  // nodes to inspect.
+  if (!GraphContainsOp(graph_def, "VariableV2")) return FrozenValueMap();
 
-		const std::string variable_name = BaseNodeName(node.input(0));
-		const auto variable_it = node_map.find(variable_name);
-		if (variable_it == node_map.end() ||
-				variable_it->second->op() != "VariableV2") {
-			continue;
-		}
-		if (!IsAllowlistedVariableName(variable_name)) continue;
-		if (frozen_values.contains(variable_name)) continue;
+  // Open the variables checkpoint reader. This will be used to load tensor
+  // values for candidate variables if their checkpoint keys can be identified
+  // from the graph.
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<BundleReader> reader,
+                      OpenVariablesBundleReader(export_dir));
 
-		std::string tensor_name = variable_name;
-		const std::string restore_input = node.input(1);
-		const int restore_output_index = OutputIndex(restore_input);
-		const std::string restore_name = BaseNodeName(restore_input);
-		const auto restore_it = node_map.find(restore_name);
-		if (restore_it != node_map.end() &&
-				restore_it->second->op() == "RestoreV2" &&
-				restore_it->second->input_size() >= 2) {
-			const std::string tensor_names_const_name =
-					BaseNodeName(restore_it->second->input(1));
-			const auto tensor_names_const_it =
-					node_map.find(tensor_names_const_name);
-			if (tensor_names_const_it != node_map.end()) {
-				TF_ASSIGN_OR_RETURN(
-						std::vector<std::string> tensor_names,
-						GetConstStringValues(*tensor_names_const_it->second));
-				if (restore_output_index >= 0 &&
-						restore_output_index < tensor_names.size()) {
-					tensor_name = tensor_names[restore_output_index];
-				} else if (!tensor_names.empty()) {
-					tensor_name = tensor_names[0];
-				}
-			}
-		}
+  TF_ASSIGN_OR_RETURN(const auto node_map, BuildNodeMap(graph_def));
+  FrozenValueMap frozen_values;
+  // The pattern we are looking is:
+  // RestoreV2 -> Assign -> VariableV2
+  for (const NodeDef& node : graph_def.node()) {
+    if (node.op() != "Assign" || node.input_size() < 2) continue;
 
-		Tensor tensor;
-		TF_RETURN_IF_ERROR(reader.Lookup(tensor_name, &tensor));
-		if (!ShouldFreezeTensor(tensor, max_tensor_bytes)) {
-			continue;
-		}
-		LOG(INFO) << "[variable_freezing] matched VariableV2 checkpoint key="
-						  << tensor_name << " graph_node=" << variable_name;
-		frozen_values[variable_name] = FrozenValue{std::move(tensor)};
-	}
-	return frozen_values;
+    // Input 0 corresponds to destination variable, input 1 corresponds to
+    // source tensor from checkpoint.
+    const std::string variable_name = BaseNodeName(node.input(0));
+    const auto variable_it = node_map.find(variable_name);
+    if (variable_it == node_map.end() ||
+        variable_it->second->op() != "VariableV2") {
+      continue;
+    }
+    if (!IsAllowlistedVariableName(variable_name)) continue;
+    if (frozen_values.contains(variable_name)) continue;
+
+    // Default to the graph variable name, then refine it when the Assign input
+    // comes from RestoreV2 by mapping that output index back to the matching
+    // checkpoint tensor name listed in RestoreV2's tensor-names input.
+    std::string tensor_name = variable_name;
+    const std::string restore_input = node.input(1);
+    const TensorId restore_tensor = ParseTensorName(restore_input);
+    const int restore_output_index = restore_tensor.index();
+    const std::string restore_name(restore_tensor.node());
+    const auto restore_it = node_map.find(restore_name);
+    if (restore_it != node_map.end() &&
+        restore_it->second->op() == "RestoreV2" &&
+        restore_it->second->input_size() >= 2) {
+      const std::string tensor_names_const_name =
+          BaseNodeName(restore_it->second->input(1));
+      const auto tensor_names_const_it = node_map.find(tensor_names_const_name);
+      if (tensor_names_const_it != node_map.end()) {
+        // RestoreV2 input(1) is a string Const listing checkpoint keys in
+        // output order, so decode it and use the restore output index to pick
+        // the matching checkpoint tensor name.
+        TF_ASSIGN_OR_RETURN(
+            std::vector<std::string> tensor_names,
+            GetConstStringValues(*tensor_names_const_it->second));
+        if (restore_output_index >= 0 &&
+            restore_output_index < tensor_names.size()) {
+          tensor_name = tensor_names[restore_output_index];
+        } else if (!tensor_names.empty()) {
+          tensor_name = tensor_names[0];
+        }
+      }
+    }
+
+    Tensor tensor;
+    TF_RETURN_IF_ERROR(reader->Lookup(tensor_name, &tensor));
+    if (!ShouldFreezeTensor(tensor, max_tensor_bytes)) {
+      continue;
+    }
+    VLOG(2) << "[variable_freezing] matched VariableV2 checkpoint key="
+            << tensor_name << " graph_node=" << variable_name;
+    frozen_values[variable_name] = tensor;
+  }
+  return frozen_values;
 }
 
 absl::StatusOr<bool> LookupTensorForCheckpointKeys(
@@ -375,50 +382,50 @@ absl::StatusOr<bool> LookupTensorForCheckpointKeys(
 	return false;
 }
 
+// Scans resource-variable graphs for VarHandleOp nodes whose names look like
+// freezeable model parameters, then loads their checkpoint values by trying
+// the common checkpoint key conventions derived from each handle.
 absl::StatusOr<FrozenValueMap> LoadFrozenVarHandleValues(
-		const std::string& export_dir, const GraphDef& graph_def,
-		int64_t max_tensor_bytes) {
-	bool has_var_handle = false;
-	for (const NodeDef& node : graph_def.node()) {
-		if (node.op() == "VarHandleOp") {
-			has_var_handle = true;
-			break;
-		}
-	}
-	if (!has_var_handle) return FrozenValueMap();
+    const std::string& export_dir, const GraphDef& graph_def,
+    int64_t max_tensor_bytes) {
+  if (!GraphContainsOp(graph_def, "VarHandleOp")) return FrozenValueMap();
+  TF_ASSIGN_OR_RETURN(std::unique_ptr<BundleReader> reader,
+                      OpenVariablesBundleReader(export_dir));
 
-	const std::string variables_prefix = io::JoinPath(
-			export_dir, kSavedModelVariablesDirectory, kSavedModelVariablesFilename);
-	BundleReader reader(Env::Default(), variables_prefix);
-	TF_RETURN_WITH_CONTEXT_IF_ERROR(
-			reader.status(), "Unable to load SavedModel variables checkpoint from ",
-			variables_prefix);
+  FrozenValueMap frozen_values;
+  for (const NodeDef& node : graph_def.node()) {
+    // Only VarHandleOp nodes represent resource variables in this path.
+    if (node.op() != "VarHandleOp") {
+      continue;
+    }
+    // Resource variables may carry both a graph node name and a shared_name;
+    // accept the handle when either one looks like an allowlisted weight/bias.
+    const auto shared_name_it = node.attr().find("shared_name");
+    const std::string shared_name =
+        shared_name_it != node.attr().end() ? shared_name_it->second.s() : "";
+    if ((!node.name().empty() && !IsAllowlistedVariableName(node.name())) &&
+        (shared_name.empty() || !IsAllowlistedVariableName(shared_name))) {
+      continue;
+    }
 
-	FrozenValueMap frozen_values;
-	for (const NodeDef& node : graph_def.node()) {
-		if (node.op() != "VarHandleOp") {
-			continue;
-		}
-		const auto shared_name_it = node.attr().find("shared_name");
-		const std::string shared_name =
-				shared_name_it != node.attr().end() ? shared_name_it->second.s() : "";
-		if ((!node.name().empty() && !IsAllowlistedVariableName(node.name())) &&
-				(shared_name.empty() || !IsAllowlistedVariableName(shared_name))) {
-			continue;
-		}
-
-		Tensor tensor;
-		TF_ASSIGN_OR_RETURN(bool found,
-												LookupTensorForCheckpointKeys(
-														&reader, CandidateCheckpointKeys(node), &tensor));
-		if (!found || !ShouldFreezeTensor(tensor, max_tensor_bytes)) {
-			continue;
-		}
-		LOG(INFO) << "[variable_freezing] matched VarHandleOp checkpoint graph_node="
-						  << node.name() << " shared_name=" << shared_name;
-		frozen_values[node.name()] = FrozenValue{std::move(tensor)};
-	}
-	return frozen_values;
+    Tensor tensor;
+    // Try the common checkpoint naming conventions for this handle until one
+    // matches, filling `tensor` when successful.
+    TF_ASSIGN_OR_RETURN(
+        bool found, LookupTensorForCheckpointKeys(
+                        reader.get(), CandidateCheckpointKeys(node), &tensor));
+    // Skip handles that have no checkpoint entry or whose tensor is too large
+    // to freeze into the graph.
+    if (!found || !ShouldFreezeTensor(tensor, max_tensor_bytes)) {
+      continue;
+    }
+    VLOG(2) << "[variable_freezing] matched VarHandleOp checkpoint graph_node="
+            << node.name() << " shared_name=" << shared_name;
+    // Key the frozen map by graph node name because later graph rewrites match
+    // consumers against VarHandleOp node names, not checkpoint keys.
+    frozen_values[node.name()] = tensor;
+  }
+  return frozen_values;
 }
 
 absl::Status RewriteTopLevelReadNodes(GraphDef* graph_def,
@@ -560,38 +567,42 @@ absl::Status RewriteCapturedFunctionReads(GraphDef* graph_def,
 
 }  // namespace
 
-absl::Status MaybeFreezeAllowlistedVariableReads(
-		const std::string& export_dir, MetaGraphDef* meta_graph_def) {
-	if (!IsEnabled() || meta_graph_def == nullptr) {
-		return absl::OkStatus();
-	}
-  LOG(INFO) << "[variable_freezing] graph before freeze:\n"
+absl::Status MaybeFreezeAllowlistedVariableReads(const std::string& export_dir,
+                                                 MetaGraphDef* meta_graph_def) {
+  if (meta_graph_def == nullptr) {
+    return absl::OkStatus();
+  }
+  // Snapshot the graph before any in-place rewrites for debugging.
+  VLOG(1) << "[variable_freezing] graph before freeze:"
           << meta_graph_def->graph_def().DebugString();
 
-	GraphDef* graph_def = meta_graph_def->mutable_graph_def();
-	TF_ASSIGN_OR_RETURN(FrozenValueMap v1_frozen_values,
-										LoadFrozenVariableV1Values(export_dir, *graph_def,
-																	GetMaxFrozenTensorBytes()));
-	TF_ASSIGN_OR_RETURN(FrozenValueMap frozen_values,
-											LoadFrozenVarHandleValues(export_dir, *graph_def,
-																								GetMaxFrozenTensorBytes()));
-	for (auto& entry : v1_frozen_values) {
-		frozen_values[entry.first] = std::move(entry.second);
-	}
-	LOG(INFO) << "[variable_freezing] export_dir=" << export_dir
-					  << " matched_v1=" << v1_frozen_values.size()
-					  << " matched_total=" << frozen_values.size();
-	if (frozen_values.empty()) {
-		return absl::OkStatus();
-	}
-
-	TF_RETURN_IF_ERROR(RewriteTopLevelReadNodes(graph_def, frozen_values));
-	TF_RETURN_IF_ERROR(RewriteCapturedFunctionReads(graph_def, frozen_values));
-  LOG(INFO) << "[variable_freezing] graph after freeze:\n"
+  GraphDef* graph_def = meta_graph_def->mutable_graph_def();
+  // Collect freezeable values from both legacy VariableV2 graphs and
+  // resource-variable graphs, then merge them into one lookup table.
+  // OPs logic can be found here tensorflow/core/ops/state_ops.cc
+  TF_ASSIGN_OR_RETURN(FrozenValueMap v1_frozen_values,
+                      LoadFrozenVariableV1Values(export_dir, *graph_def,
+                                                 kDefaultMaxTensorBytes));
+  TF_ASSIGN_OR_RETURN(FrozenValueMap frozen_values,
+                      LoadFrozenVarHandleValues(export_dir, *graph_def,
+                                                kDefaultMaxTensorBytes));
+  for (auto& entry : v1_frozen_values) {
+    frozen_values[entry.first] = std::move(entry.second);
+  }
+  VLOG(1) << "[variable_freezing] export_dir=" << export_dir
+          << " matched_v1=" << v1_frozen_values.size()
+          << " matched_total=" << frozen_values.size();
+  // Leave the graph untouched when no allowlisted checkpoint tensors matched.
+  if (frozen_values.empty()) {
+    return absl::OkStatus();
+  }
+  // Rewrite direct top-level reads first, then propagate the same frozen
+  // values into function bodies reached through PartitionedCall nodes.
+  TF_RETURN_IF_ERROR(RewriteTopLevelReadNodes(graph_def, frozen_values));
+  TF_RETURN_IF_ERROR(RewriteCapturedFunctionReads(graph_def, frozen_values));
+  VLOG(1) << "[variable_freezing] graph after freeze:\n"
           << meta_graph_def->graph_def().DebugString();
-	LOG(INFO) << "[variable_freezing] finished rewrites for export_dir="
-					  << export_dir;
-	return absl::OkStatus();
+  return absl::OkStatus();
 }
 
 }  // namespace internal
