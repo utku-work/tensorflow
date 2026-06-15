@@ -83,32 +83,33 @@ bool GraphContainsOp(const GraphDef& graph_def, absl::string_view op_name) {
 	return false;
 }
 
+// Normalizes a graph input string like "foo", "foo:0", or "^foo" down to
+// the producer node name "foo".
 std::string BaseNodeName(absl::string_view input) {
-	if (!input.empty() && input.front() == '^') {
-		input.remove_prefix(1);
-	}
-	const size_t colon = input.find(':');
-	if (colon == absl::string_view::npos) return std::string(input);
-	return std::string(input.substr(0, colon));
+	return std::string(ParseTensorName(input).node());
 }
 
+// Returns the first non-control input for a node, normalized to its producer
+// node name. Control inputs like "^foo" are skipped.
 bool GetFirstDataInput(const NodeDef& node, std::string* input_name) {
 	for (const std::string& input : node.input()) {
-		if (!input.empty() && input.front() == '^') continue;
-		*input_name = BaseNodeName(input);
+		const TensorId tensor_id = ParseTensorName(input);
+		if (tensor_id.index() == Graph::kControlSlot) continue;
+		*input_name = std::string(tensor_id.node());
 		return true;
 	}
 	return false;
 }
 
 std::vector<std::string> GetControlInputs(const NodeDef& node) {
-	std::vector<std::string> controls;
-	for (const std::string& input : node.input()) {
-		if (!input.empty() && input.front() == '^') {
-			controls.push_back(input);
-		}
-	}
-	return controls;
+  std::vector<std::string> controls;
+  for (const std::string& input : node.input()) {
+    const TensorId tensor_id = ParseTensorName(input);
+    if (tensor_id.index() == Graph::kControlSlot) {
+      controls.push_back(input);
+    }
+  }
+  return controls;
 }
 
 void PreserveInternalAttrs(const NodeDef& original, NodeDef* replacement) {
@@ -126,19 +127,19 @@ void PreserveInternalAttrs(const NodeDef& original, NodeDef* replacement) {
 }
 
 void ReplaceNodeWithConst(const Tensor& frozen_value, NodeDef* node) {
-	const std::vector<std::string> controls = GetControlInputs(*node);
-	const NodeDef original = *node;
+  const std::vector<std::string> controls = GetControlInputs(*node);
+  const NodeDef original = *node;
 
-	node->set_op("Const");
-	node->clear_input();
-	for (const std::string& control : controls) {
-		node->add_input(control);
-	}
+  node->set_op("Const");
+  node->clear_input();
+  for (const std::string& control : controls) {
+    node->add_input(control);
+  }
 
-	PreserveInternalAttrs(original, node);
-	(*node->mutable_attr())["dtype"].set_type(frozen_value.tensor.dtype());
-	frozen_value.tensor.AsProtoTensorContent(
-			(*node->mutable_attr())["value"].mutable_tensor());
+  PreserveInternalAttrs(original, node);
+  (*node->mutable_attr())["dtype"].set_type(frozen_value.dtype());
+  frozen_value.AsProtoTensorContent(
+      (*node->mutable_attr())["value"].mutable_tensor());
 }
 
 bool IsCallNode(const NodeDef& node) {
@@ -248,22 +249,25 @@ absl::flat_hash_map<std::string, const NodeDef*> BuildFunctionNodeMap(
 	return node_map;
 }
 
+// Follows chains of Identity nodes until it reaches a real producer, so graph
+// rewrites can reason about the underlying source variable instead of its
+// forwarding wrappers.
 std::string ResolveForwardedInputName(
-		absl::string_view input_name,
-		const absl::flat_hash_map<std::string, const NodeDef*>& node_map) {
-	std::string current = BaseNodeName(input_name);
-	while (true) {
-		const auto it = node_map.find(current);
-		if (it == node_map.end() || it->second->op() != "Identity") {
-			return current;
-		}
+    absl::string_view input_name,
+    const absl::flat_hash_map<std::string, const NodeDef*>& node_map) {
+  std::string current = BaseNodeName(input_name);
+  while (true) {
+    const auto it = node_map.find(current);
+    if (it == node_map.end() || it->second->op() != "Identity") {
+      return current;
+    }
 
-		std::string forwarded_name;
-		if (!GetFirstDataInput(*it->second, &forwarded_name)) {
-			return current;
-		}
-		current = forwarded_name;
-	}
+    std::string forwarded_name;
+    if (!GetFirstDataInput(*it->second, &forwarded_name)) {
+      return current;
+    }
+    current = forwarded_name;
+  }
 }
 
 std::vector<std::string> CandidateCheckpointKeys(const NodeDef& node) {
@@ -382,6 +386,29 @@ absl::StatusOr<bool> LookupTensorForCheckpointKeys(
 	return false;
 }
 
+// Maps a call node's frozen actual arguments onto the callee function's formal
+// input names. Only non-control inputs that resolve to already-frozen tensors
+// are forwarded into the returned map.
+template <typename FrozenLookupFn>
+FrozenInputMap BuildCalleeInputsForCallNode(
+    const NodeDef& call_node,
+    const absl::flat_hash_map<std::string, const NodeDef*>& caller_node_map,
+    const FunctionDef& callee, FrozenLookupFn&& frozen_lookup) {
+  FrozenInputMap callee_inputs;
+  const int arg_count =
+      std::min(call_node.input_size(), callee.signature().input_arg_size());
+  for (int i = 0; i < arg_count; ++i) {
+	const TensorId tensor_id = ParseTensorName(call_node.input(i));
+	if (tensor_id.index() == Graph::kControlSlot) continue;
+    const std::string input_name =
+        ResolveForwardedInputName(call_node.input(i), caller_node_map);
+    const Tensor* frozen_tensor = frozen_lookup(input_name);
+    if (frozen_tensor == nullptr) continue;
+    callee_inputs[callee.signature().input_arg(i).name()] = frozen_tensor;
+  }
+  return callee_inputs;
+}
+
 // Scans resource-variable graphs for VarHandleOp nodes whose names look like
 // freezeable model parameters, then loads their checkpoint values by trying
 // the common checkpoint key conventions derived from each handle.
@@ -428,24 +455,28 @@ absl::StatusOr<FrozenValueMap> LoadFrozenVarHandleValues(
   return frozen_values;
 }
 
+// Rewrites top-level variable-read nodes into Const nodes when their resolved
+// source variable already has a frozen checkpoint value.
 absl::Status RewriteTopLevelReadNodes(GraphDef* graph_def,
-																			const FrozenValueMap& frozen_values) {
-	TF_ASSIGN_OR_RETURN(const auto node_map, BuildNodeMap(*graph_def));
-	for (NodeDef& node : *graph_def->mutable_node()) {
-		if (node.op() != "ReadVariableOp" && node.op() != "Identity") {
-			continue;
-		}
+                                      const FrozenValueMap& frozen_values) {
+  TF_ASSIGN_OR_RETURN(const auto node_map, BuildNodeMap(*graph_def));
+  for (NodeDef& node : *graph_def->mutable_node()) {
+    // Identity is included because graphs often forward a variable read through
+    // an Identity before the value reaches real consumers.
+    if (node.op() != "ReadVariableOp" && node.op() != "Identity") {
+      continue;
+    }
 
-		std::string source_name;
-		if (!GetFirstDataInput(node, &source_name)) continue;
-		source_name = ResolveForwardedInputName(source_name, node_map);
-		const auto frozen_it = frozen_values.find(source_name);
-		if (frozen_it == frozen_values.end()) continue;
-		LOG(INFO) << "[variable_freezing] rewrite top-level node=" << node.name()
-						  << " op=" << node.op() << " source=" << source_name;
-		ReplaceNodeWithConst(frozen_it->second, &node);
-	}
-	return absl::OkStatus();
+    std::string source_name;
+    if (!GetFirstDataInput(node, &source_name)) continue;
+    source_name = ResolveForwardedInputName(source_name, node_map);
+    const auto frozen_it = frozen_values.find(source_name);
+    if (frozen_it == frozen_values.end()) continue;
+    VLOG(2) << "[variable_freezing] rewrite top-level node=" << node.name()
+            << " op=" << node.op() << " source=" << source_name;
+    ReplaceNodeWithConst(frozen_it->second, &node);
+  }
+  return absl::OkStatus();
 }
 
 std::string BuildVisitedKey(absl::string_view function_name,
@@ -456,118 +487,129 @@ std::string BuildVisitedKey(absl::string_view function_name,
 		keys.push_back(entry.first);
 	}
 	std::sort(keys.begin(), keys.end());
-	return absl::StrCat(function_name, "|", absl::StrCat(keys.size()));
+  // Canonicalize the frozen input names so revisiting the same function with
+  // the same logical frozen-input set produces the same cache key.
+  std::string visited_key(function_name);
+  for (const std::string& key : keys) {
+    absl::StrAppend(&visited_key, "|", key);
+  }
+  return visited_key;
 }
 
 void BuildFunctionMap(GraphDef* graph_def,
-											absl::flat_hash_map<std::string, FunctionDef*>* map) {
-	map->clear();
-	map->reserve(graph_def->library().function_size());
-	for (FunctionDef& function : *graph_def->mutable_library()->mutable_function()) {
-		(*map)[function.signature().name()] = &function;
-	}
+                      absl::flat_hash_map<std::string, FunctionDef*>* map) {
+  map->clear();
+  map->reserve(graph_def->library().function_size());
+  for (FunctionDef& function :
+       *graph_def->mutable_library()->mutable_function()) {
+    (*map)[function.signature().name()] = &function;
+  }
 }
 
 absl::Status RewriteFunctionAndDescendants(
-		FunctionDef* function, const FrozenInputMap& frozen_inputs,
-		absl::flat_hash_map<std::string, FunctionDef*>* function_map,
-		absl::flat_hash_map<std::string, bool>* visited) {
-	const std::string visited_key =
-			BuildVisitedKey(function->signature().name(), frozen_inputs);
-	if ((*visited)[visited_key]) {
-		return absl::OkStatus();
-	}
-	(*visited)[visited_key] = true;
+    FunctionDef* function, const FrozenInputMap& frozen_inputs,
+    absl::flat_hash_map<std::string, FunctionDef*>* function_map,
+    absl::flat_hash_map<std::string, bool>* visited) {
+  // Guard against revisiting the same function with the same set of frozen
+  // inputs while walking nested call graphs.
+  const std::string visited_key =
+      BuildVisitedKey(function->signature().name(), frozen_inputs);
+  if ((*visited)[visited_key]) {
+    return absl::OkStatus();
+  }
+  (*visited)[visited_key] = true;
 
-	const absl::flat_hash_map<std::string, const NodeDef*> function_node_map =
-			BuildFunctionNodeMap(*function);
+  // Build local name lookup for nodes inside this specific function body.
+  const absl::flat_hash_map<std::string, const NodeDef*> function_node_map =
+      BuildFunctionNodeMap(*function);
 
-	for (NodeDef& node : *function->mutable_node_def()) {
-		if (node.op() == "ReadVariableOp") {
-			std::string input_name;
-			if (GetFirstDataInput(node, &input_name)) {
-				input_name = ResolveForwardedInputName(input_name, function_node_map);
-				const auto frozen_it = frozen_inputs.find(input_name);
-				if (frozen_it != frozen_inputs.end()) {
-					LOG(INFO) << "[variable_freezing] rewrite function node="
-								  << node.name() << " function="
-								  << function->signature().name() << " source="
-								  << input_name;
-					ReplaceNodeWithConst(*frozen_it->second, &node);
-				}
-			}
-			continue;
-		}
+  for (NodeDef& node : *function->mutable_node_def()) {
+    if (node.op() == "ReadVariableOp") {
+      // If this read consumes one of the function inputs that is already known
+      // to be frozen, rewrite the read directly into a Const node.
+      std::string input_name;
+      if (GetFirstDataInput(node, &input_name)) {
+        input_name = ResolveForwardedInputName(input_name, function_node_map);
+        const auto frozen_it = frozen_inputs.find(input_name);
+        if (frozen_it != frozen_inputs.end()) {
+          VLOG(2) << "[variable_freezing] rewrite function node="
+                    << node.name()
+                    << " function=" << function->signature().name()
+                    << " source=" << input_name;
+          ReplaceNodeWithConst(*frozen_it->second, &node);
+        }
+      }
+      continue;
+    }
 
-		if (!IsCallNode(node)) continue;
+    if (!IsCallNode(node)) continue;
 
-		const std::string callee_name = GetCalledFunctionName(node);
-		if (callee_name.empty()) continue;
-		const auto callee_it = function_map->find(callee_name);
-		if (callee_it == function_map->end()) continue;
+    const std::string callee_name = GetCalledFunctionName(node);
+    if (callee_name.empty()) continue;
+    const auto callee_it = function_map->find(callee_name);
+    if (callee_it == function_map->end()) continue;
 
-		FrozenInputMap callee_inputs;
-		const int arg_count = std::min(node.input_size(),
-																	 callee_it->second->signature().input_arg_size());
-		for (int i = 0; i < arg_count; ++i) {
-			if (!node.input(i).empty() && node.input(i).front() == '^') continue;
-			const std::string input_name = ResolveForwardedInputName(
-					node.input(i), function_node_map);
-			const auto frozen_it = frozen_inputs.find(input_name);
-			if (frozen_it == frozen_inputs.end()) continue;
-			callee_inputs[callee_it->second->signature().input_arg(i).name()] =
-					frozen_it->second;
-		}
+    // Translate any frozen actual arguments at this call site into the callee's
+    // formal input names, then recurse only when something frozen is actually
+    // being passed through.
+    FrozenInputMap callee_inputs = BuildCalleeInputsForCallNode(
+        node, function_node_map, *callee_it->second,
+        [&frozen_inputs](absl::string_view input_name) -> const Tensor* {
+          const auto frozen_it = frozen_inputs.find(std::string(input_name));
+          return frozen_it == frozen_inputs.end() ? nullptr : frozen_it->second;
+        });
 
-		if (!callee_inputs.empty()) {
-			TF_RETURN_IF_ERROR(RewriteFunctionAndDescendants(
-					callee_it->second, callee_inputs, function_map, visited));
-		}
-	}
+    if (!callee_inputs.empty()) {
+      TF_RETURN_IF_ERROR(RewriteFunctionAndDescendants(
+          callee_it->second, callee_inputs, function_map, visited));
+    }
+  }
 
-	return absl::OkStatus();
+  return absl::OkStatus();
 }
 
+// Seeds function-body rewrites from top-level PartitionedCall nodes by mapping
+// frozen top-level inputs onto each callee's formal arguments, then recursively
+// rewriting ReadVariableOp nodes inside those called functions.
 absl::Status RewriteCapturedFunctionReads(GraphDef* graph_def,
-																					const FrozenValueMap& frozen_values) {
-	TF_ASSIGN_OR_RETURN(const auto node_map, BuildNodeMap(*graph_def));
-	absl::flat_hash_map<std::string, FunctionDef*> function_map;
-	BuildFunctionMap(graph_def, &function_map);
+                                          const FrozenValueMap& frozen_values) {
+  // Build quick lookup tables for top-level nodes and library functions.
+  TF_ASSIGN_OR_RETURN(const auto node_map, BuildNodeMap(*graph_def));
+  absl::flat_hash_map<std::string, FunctionDef*> function_map;
+  BuildFunctionMap(graph_def, &function_map);
 
-	absl::flat_hash_map<std::string, bool> visited;
-	for (const NodeDef& node : graph_def->node()) {
-		if (!IsCallNode(node)) continue;
+  absl::flat_hash_map<std::string, bool> visited;
+  for (const NodeDef& node : graph_def->node()) {
+    // Only call nodes can pass frozen top-level values into function bodies.
+    if (!IsCallNode(node)) continue;
 
-		const std::string callee_name = GetCalledFunctionName(node);
-		if (callee_name.empty()) continue;
-		const auto callee_it = function_map.find(callee_name);
-		if (callee_it == function_map.end()) continue;
+    const std::string callee_name = GetCalledFunctionName(node);
+    if (callee_name.empty()) continue;
+    const auto callee_it = function_map.find(callee_name);
+    if (callee_it == function_map.end()) continue;
 
-		FrozenInputMap callee_inputs;
-		const int arg_count = std::min(node.input_size(),
-																	 callee_it->second->signature().input_arg_size());
-		for (int i = 0; i < arg_count; ++i) {
-			if (!node.input(i).empty() && node.input(i).front() == '^') continue;
-			const std::string input_name = ResolveForwardedInputName(
-					node.input(i), node_map);
-			const auto frozen_it = frozen_values.find(input_name);
-			if (frozen_it == frozen_values.end()) continue;
-			callee_inputs[callee_it->second->signature().input_arg(i).name()] =
-					&frozen_it->second;
-		}
+    // Convert any frozen top-level call arguments into the callee's formal
+    // input names so RewriteFunctionAndDescendants can rewrite reads inside
+    // that function body.
+    FrozenInputMap callee_inputs = BuildCalleeInputsForCallNode(
+        node, node_map, *callee_it->second,
+        [&frozen_values](absl::string_view input_name) -> const Tensor* {
+          const auto frozen_it = frozen_values.find(std::string(input_name));
+          return frozen_it == frozen_values.end() ? nullptr
+                                                  : &frozen_it->second;
+        });
 
-		if (!callee_inputs.empty()) {
-			TF_RETURN_IF_ERROR(RewriteFunctionAndDescendants(
-					callee_it->second, callee_inputs, &function_map, &visited));
-		}
-	}
-
-	return absl::OkStatus();
+    if (!callee_inputs.empty()) {
+      TF_RETURN_IF_ERROR(RewriteFunctionAndDescendants(
+          callee_it->second, callee_inputs, &function_map, &visited));
+    }
+  }
+  return absl::OkStatus();
 }
 
 }  // namespace
 
-absl::Status MaybeFreezeAllowlistedVariableReads(const std::string& export_dir,
+absl::Status FreezeAllowlistedVariableReads(const std::string& export_dir,
                                                  MetaGraphDef* meta_graph_def) {
   if (meta_graph_def == nullptr) {
     return absl::OkStatus();

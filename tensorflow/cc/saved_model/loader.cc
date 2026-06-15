@@ -295,7 +295,7 @@ absl::Status LoadSavedModelInternal(const SessionOptions& session_options,
                                     SavedModelBundle* const bundle) {
   TF_RETURN_IF_ERROR(ReadMetaGraphDefFromSavedModel(export_dir, tags,
                                                     &bundle->meta_graph_def));
-  TF_RETURN_IF_ERROR(internal::MaybeFreezeAllowlistedVariableReads(
+  TF_RETURN_IF_ERROR(internal::FreezeAllowlistedVariableReads(
     export_dir, &bundle->meta_graph_def));
   TF_RETURN_IF_ERROR(
       ReadSavedModelDebugInfoIfPresent(export_dir, &bundle->debug_info));
@@ -435,7 +435,7 @@ absl::Status LoadSavedModelInternal(const SessionOptions& session_options,
   TF_RETURN_IF_ERROR(
       ReadMetaGraphDefFromSavedModel(export_dir, tags, &meta_graph_def));
   TF_RETURN_IF_ERROR(
-    internal::MaybeFreezeAllowlistedVariableReads(export_dir, &meta_graph_def));
+    internal::FreezeAllowlistedVariableReads(export_dir, &meta_graph_def));
   std::unique_ptr<Session> session;
   TF_RETURN_IF_ERROR(LoadGraphDefIntoSession(
       session_options, std::move(*meta_graph_def.mutable_graph_def()),
